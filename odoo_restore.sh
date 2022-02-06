@@ -2,7 +2,7 @@
 
 # vars
 BACKUP_DIR=~/odoo_backups
-ODOO_DATABASE=14_polimexodoo
+ODOO_DATABASE=15_polimexodoo
 ADMIN_PASSWORD=dbadmin
 
 if [ $# -eq 0 ]
@@ -11,4 +11,4 @@ if [ $# -eq 0 ]
     exit 0
 fi
 
-curl -F "master_pwd=${ADMIN_PASSWORD}" -F backup_file=@${BACKUP_DIR}/$1 -F 'copy=true' -F "name=${ODOO_DATABASE}" http://localhost:8014/web/database/restore
+curl -F "master_pwd=${ADMIN_PASSWORD}" -F backup_file=@${BACKUP_DIR}/$1 -F 'copy=true' -F "name=${ODOO_DATABASE}" http://localhost:8015/web/database/restore

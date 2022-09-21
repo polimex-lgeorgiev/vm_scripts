@@ -1,3 +1,5 @@
+#!/bin/bash
+
 # vars
 ODOO_DATABASE=15_polimexodoo
 ODOO_USER=odoo15

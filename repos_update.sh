@@ -1,39 +1,30 @@
-#!/bin/sh
+#!/bin/bash
 
-# vars
-ODOO_USER=odoo15
+# Запомняне на текущата директория
+start_dir=$(pwd)
 
-echo 'Stop Odoo Service before update'
-sudo systemctl stop ${ODOO_SERVICE}
-echo 'Downloading Polimex modules'
-sudo -H -u ${ODOO_USER} bash -c 'cd /opt/odoo15/custom-addons/polimex-rfid/ && git pull'
+# Директория, където ще търсим клоновете
+root_dir="/opt/odoo15/custom_addons"
 
-if [ ! "$1" = "" ] ; then
-
-   if [ "$GITREPO" = "" -a -d "/opt/${ODOO_USER}/custom-addons" ] ; then
-      GITREPO="/opt/${ODOO_USER}/custom-addons"
-   fi
-
-   if [ "$GITREPO" != "" ] ; then
-
-      echo "Git repositories found in $GITREPO"
-      echo "-=-=-=-=-=-=-=-=-=-=-=-=-=-"
-
-      DIRS="`/bin/ls -1 $GITREPO`"
-
-      for dir in $DIRS ; do
-
-         if [ -d $GITREPO/$dir/.git ] ; then
-            echo "$dir -> git $1"
-#            cd $GITREPO/$dir ; git $@
-            sudo -H -u ${ODOO_USER} bash -c "cd ${GITREPO}/${dir} && git pull"
-            echo
-         fi
-
-      done
-   else
-
-      echo "Git repositories not found."
-
-   fi
+# Проверка дали е подаден опционален параметър за root_dir
+if [ $# -eq 1 ]; then
+    if [ $1 == "-h" ]; then
+        echo "Usage: $0 [root_dir]"
+        echo "  root_dir - the directory where the script will search for git repos"
+        echo "            if not provided, the script will use the default value: $root_dir"
+        exit 0
+    fi
+    root_dir=$1
 fi
+
+# Обхождане на всички директории и поддиректории в root_dir
+find "$root_dir" -type d -name ".git" | while read dir
+do
+    # Опресняване на репозитория с git pull
+    echo "Updating $(dirname "$dir")"
+    cd "$(dirname "$dir")"
+    git pull
+done
+
+# Връщане в текущата директория
+cd $start_dir

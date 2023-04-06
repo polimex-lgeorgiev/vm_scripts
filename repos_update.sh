@@ -13,8 +13,11 @@ if [ $# -eq 1 ]; then
         echo "  root_dir - the directory where the script will search for git repos"
         echo "            if not provided, the script will use the default value: $root_dir"
         exit 0
+    elif [ $1 == "." ]; then
+        root_dir=$start_dir
+    else
+        root_dir=$1
     fi
-    root_dir=$1
 fi
 
 # Обхождане на всички директории и поддиректории в root_dir

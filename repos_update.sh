@@ -51,13 +51,13 @@ fi
 user_name=$(echo "$root_dir" | sed 's:.*/\([^/]*\)/.*:\1:')
 
 # Find Git repositories and update them
-sudo -u "$user_name" bash -c "find \"$root_dir\" -type d -name \".git\" \
-  -not -path \"*/odoo/*\" \
-  -not -path \"*/polimex-rfid/*\" \
-  -not -path \"*/venv/*\" | while read dir; do
-    echo \"Updating \$(dirname \"\$dir\")\"
-    sudo -u \"$user_name\" bash -c \"cd '\$(dirname \"\$dir\")' && git pull\"
-done"
+find "$root_dir" -type d -name ".git" \
+  -not -path "*/odoo/*" \
+  -not -path "*/polimex-rfid/*" \
+  -not -path "*/venv/*" | while read dir; do
+    echo "Updating $(dirname "$dir")"
+    cd "$(dirname "$dir")" && sudo -u "$user_name" git pull
+done
 
 # Return to the original directory
-cd $start_dir
+cd "$start_dir"

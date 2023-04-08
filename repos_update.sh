@@ -41,15 +41,14 @@ fi
 user_name=$(echo "$root_dir" | sed 's:.*/\([^/]*\)/.*:\1:')
 
 # Обхождане на всички директории и поддиректории в root_dir, игнорирайки директории с име 'odoo', 'polimex' или съдържащи 'venv' в името си
-find "$root_dir" -type d -name ".git" \
-  -not -path "*/odoo/*" \
-  -not -path "*/polimex/*" \
-  -not -path "*/venv/*" | while read dir
-do
+sudo -u "$user_name" bash -c "find \"$root_dir\" -type d -name \".git\" \
+  -not -path \"*/odoo/*\" \
+  -not -path \"*/polimex/*\" \
+  -not -path \"*/venv/*\" | while read dir; do
     # Опресняване на репозитория с git pull
-    echo "Updating $(dirname "$dir")"
-    sudo -u "$user_name" bash -c "cd $(dirname "$dir") && git pull"
-done
+    echo \"Updating \$(dirname \"\$dir\")\"
+    cd \"\$(dirname \"\$dir\")\" && git pull
+done"
 
 # Връщане в текущата директория
 cd $start_dir

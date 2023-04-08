@@ -11,8 +11,9 @@
 # function to check if the user has sudo rights
 function check_sudo() {
   if [ "$(id -u)" != "0" ]; then
-    echo "This script must be run with sudo privileges." >&2
-    exit 1
+    echo "This script requires sudo privileges. Please enter your sudo password:"
+    sudo "$0" "$@"
+    exit $?
   fi
 }
 

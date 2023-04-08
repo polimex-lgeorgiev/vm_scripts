@@ -23,12 +23,12 @@ fi
 if [ ! -d "$root_dir" ]; then
     opt_dirs=(/opt/*/)
     if [ ${#opt_dirs[@]} -eq 1 ]; then
-        root_dir=${opt_dirs[0]}"custom_addons"
+        root_dir=${opt_dirs[0]}custom-addons
     else
         echo "Please choose a directory from the list below:"
         select choice in /opt/*/; do
             if [ -n "$choice" ]; then
-                root_dir=$choice"custom_addons"
+                root_dir=$choice"custom-addons"
                 break
             else
                 echo "Invalid selection. Please choose a valid directory."

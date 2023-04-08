@@ -11,8 +11,8 @@ if [ $# -eq 1 ]; then
     if [ $1 == "-h" ]; then
         echo "Usage: $0 [root_dir]"
         echo "  root_dir - the directory where the script will search for git repos,"
-        echo "             ignoring folders named 'odoo', 'polimex' and containing 'venv' in their names."
-        echo "            If not provided, the script will use the default value: /opt/odoo15/custom_addons"
+        echo "             ignoring folders named 'odoo', 'polimex-rfid' and containing 'venv' in their names."
+        echo "            If not provided, the script will use the default value: /opt/odoo15/custom-addons"
         exit 0
     else
         root_dir=$1
@@ -40,10 +40,10 @@ fi
 # Extract the user name from the root directory path
 user_name=$(echo "$root_dir" | sed 's:.*/\([^/]*\)/.*:\1:')
 
-# Обхождане на всички директории и поддиректории в root_dir, игнорирайки директории с име 'odoo', 'polimex' или съдържащи 'venv' в името си
+# Обхождане на всички директории и поддиректории в root_dir, игнорирайки директории с име 'odoo', 'polimex-rfid' или съдържащи 'venv' в името си
 sudo -u "$user_name" bash -c "find \"$root_dir\" -type d -name \".git\" \
   -not -path \"*/odoo/*\" \
-  -not -path \"*/polimex/*\" \
+  -not -path \"*/polimex-rfid/*\" \
   -not -path \"*/venv/*\" | while read dir; do
     # Опресняване на репозитория с git pull
     echo \"Updating \$(dirname \"\$dir\")\"

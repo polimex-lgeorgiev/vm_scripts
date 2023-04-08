@@ -1,22 +1,32 @@
 #!/bin/bash
 
-# Запомняне на текущата директория
+# Save the current directory
 start_dir=$(pwd)
 
-# Директория, където ще търсим клоновете
+# Set the directory to search for Git repositories
 root_dir=""
 
-# Проверка дали е подаден опционален параметър за root_dir
+# Check for optional root_dir argument
 if [ $# -eq 1 ]; then
     if [ $1 == "-h" ]; then
+        # Display help message
         echo "Usage: $0 [root_dir]"
-        echo "  root_dir - the directory where the script will search for git repos,"
-        echo "             ignoring folders named 'odoo', 'polimex-rfid' and containing 'venv' in their names."
-        echo "            If not provided, the script will use the default value: /opt/odoo15/custom-addons"
+        echo ""
+        echo "Description:"
+        echo "  This script searches for Git repositories in the specified directory and its subdirectories, excluding directories with the names 'odoo', 'polimex-rfid', and containing 'venv' in their names. It then updates each repository using 'git pull'."
+        echo ""
+        echo "Arguments:"
+        echo "  root_dir (optional) - The directory where the script will search for Git repositories. If not provided, the default value '/opt/odoo15/custom-addons' will be used. If this directory does not exist or there are multiple directories in /opt, the script will prompt the user to choose one."
+        echo ""
+        echo "Options:"
+        echo "  -h  Display this help message and exit."
         exit 0
     else
         root_dir=$1
     fi
+else
+    # Set the default root directory
+    root_dir="/opt/odoo15/custom-addons"
 fi
 
 # Check if root_dir exists or there are more than one folder in /opt
@@ -40,15 +50,14 @@ fi
 # Extract the user name from the root directory path
 user_name=$(echo "$root_dir" | sed 's:.*/\([^/]*\)/.*:\1:')
 
-# Обхождане на всички директории и поддиректории в root_dir, игнорирайки директории с име 'odoo', 'polimex-rfid' или съдържащи 'venv' в името си
-sudo -u "$user_name" bash -c "find \"$root_dir\" -type d -name \".git\" \
-  -not -path \"*/odoo/*\" \
-  -not -path \"*/polimex-rfid/*\" \
-  -not -path \"*/venv/*\" | while read dir; do
-    # Опресняване на репозитория с git pull
-    echo \"Updating \$(dirname \"\$dir\")\"
-    cd \"\$(dirname \"\$dir\")\" && git pull
-done"
+# Find Git repositories and update them
+find "$root_dir" -type d -name ".git" \
+  -not -path "*/odoo/*" \
+  -not -path "*/polimex-rfid/*" \
+  -not -path "*/venv/*" | while read dir; do
+    echo "Updating $(dirname "$dir")"
+    sudo -u "$user_name" bash -c "cd \"\$(dirname "$dir")\" && git pull"
+done
 
-# Връщане в текущата директория
+# Return to the original directory
 cd $start_dir

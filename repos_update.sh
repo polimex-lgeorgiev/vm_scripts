@@ -4,29 +4,51 @@
 start_dir=$(pwd)
 
 # Директория, където ще търсим клоновете
-root_dir="/opt/odoo15/custom_addons"
+root_dir=""
 
 # Проверка дали е подаден опционален параметър за root_dir
 if [ $# -eq 1 ]; then
     if [ $1 == "-h" ]; then
         echo "Usage: $0 [root_dir]"
-        echo "  root_dir - the directory where the script will search for git repos"
-        echo "            if not provided, the script will use the default value: $root_dir"
+        echo "  root_dir - the directory where the script will search for git repos,"
+        echo "             ignoring folders named 'odoo', 'polimex' and containing 'venv' in their names."
+        echo "            If not provided, the script will use the default value: /opt/odoo15/custom_addons"
         exit 0
-    elif [ $1 == "." ]; then
-        root_dir=$start_dir
     else
         root_dir=$1
     fi
 fi
 
-# Обхождане на всички директории и поддиректории в root_dir
-find "$root_dir" -type d -name ".git" | while read dir
+# Check if root_dir exists or there are more than one folder in /opt
+if [ ! -d "$root_dir" ]; then
+    opt_dirs=(/opt/*/)
+    if [ ${#opt_dirs[@]} -eq 1 ]; then
+        root_dir=${opt_dirs[0]}"custom_addons"
+    else
+        echo "Please choose a directory from the list below:"
+        select choice in /opt/*/; do
+            if [ -n "$choice" ]; then
+                root_dir=$choice"custom_addons"
+                break
+            else
+                echo "Invalid selection. Please choose a valid directory."
+            fi
+        done
+    fi
+fi
+
+# Extract the user name from the root directory path
+user_name=$(echo "$root_dir" | sed 's:.*/\([^/]*\)/.*:\1:')
+
+# Обхождане на всички директории и поддиректории в root_dir, игнорирайки директории с име 'odoo', 'polimex' или съдържащи 'venv' в името си
+find "$root_dir" -type d -name ".git" \
+  -not -path "*/odoo/*" \
+  -not -path "*/polimex/*" \
+  -not -path "*/venv/*" | while read dir
 do
     # Опресняване на репозитория с git pull
     echo "Updating $(dirname "$dir")"
-    cd "$(dirname "$dir")"
-    git pull
+    sudo -u "$user_name" bash -c "cd $(dirname "$dir") && git pull"
 done
 
 # Връщане в текущата директория

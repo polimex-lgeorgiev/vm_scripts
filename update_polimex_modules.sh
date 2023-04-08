@@ -8,11 +8,13 @@
 # It may not be copied, modified, or distributed without the express
 # permission of Polimex Holding Ltd.
 
-# vars
-ODOO_DATABASE=15_polimexodoo
-ODOO_USER=odoo15
-ODOO_SERVICE=odoo15
-ODOO_MODULE=${1:-hr_rfid}
+# function to check if the user has sudo rights
+function check_sudo() {
+  if [ "$(id -u)" != "0" ]; then
+    echo "This script must be run with sudo privileges." >&2
+    exit 1
+  fi
+}
 
 # function to display help screen
 function show_help() {
@@ -29,11 +31,20 @@ function show_help() {
   echo "  -h, --help    Display this help screen and exit."
 }
 
+# check for sudo rights
+check_sudo
+
 # check for help option
 if [[ $1 == "-h" || $1 == "--help" ]]; then
   show_help
   exit 0
 fi
+
+# vars
+ODOO_DATABASE=15_polimexodoo
+ODOO_USER=odoo15
+ODOO_SERVICE=odoo15
+ODOO_MODULE=${1:-hr_rfid}
 
 echo 'Downloading Polimex modules'
 sudo -H -u ${ODOO_USER} bash -c "cd /opt/${ODOO_USER}/custom-addons/polimex-rfid/ && git fetch"

@@ -30,6 +30,7 @@ sudo apt --purge remove $(dpkg --list | tail -n +6 | grep -E 'linux-image-[0-9]+
 # Clean cache from various applications
 echo "Cleaning application cache..."
 sudo apt install -y bleachbit
+export DISPLAY="$DISPLAY"
 bleachbit --clean --preset --no-gui
 
 # Remove temporary files

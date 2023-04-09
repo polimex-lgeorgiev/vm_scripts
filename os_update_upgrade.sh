@@ -27,11 +27,16 @@ sudo apt-get clean
 echo "Removing old kernels..."
 sudo apt --purge remove $(dpkg --list | tail -n +6 | grep -E 'linux-image-[0-9]+' | grep -Fv $(uname -r) | awk '{print $2}' | tr '\n' ' ')
 
+# Check if BleachBit is installed, and install it if necessary
+if ! dpkg-query -W -f='${Status}' bleachbit 2>/dev/null | grep -q "ok installed"; then
+  echo "Installing BleachBit..."
+  apt install -y bleachbit
+fi
+
 # Clean cache from various applications
 echo "Cleaning application cache..."
-sudo apt install -y bleachbit
 export DISPLAY="$DISPLAY"
-bleachbit --clean --preset --no-gui
+bleachbit --clean --preset &
 
 # Remove temporary files
 echo "Removing temporary files..."

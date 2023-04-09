@@ -1,6 +1,17 @@
 #!/bin/bash
 # Script to clean up disk space on Ubuntu
 
+# Function to check if the script is running with sudo rights
+check_sudo_rights() {
+  if [[ $EUID -ne 0 ]]; then
+    echo "This script must be run with sudo rights. Please try again with 'sudo ./cleanup.sh'"
+    exit 1
+  fi
+}
+
+# Check for sudo rights
+check_sudo_rights
+
 # Update package index
 echo "Updating package index..."
 sudo apt -y update && sudo apt -y upgrade
@@ -19,7 +30,7 @@ sudo apt --purge remove $(dpkg --list | tail -n +6 | grep -E 'linux-image-[0-9]+
 # Clean cache from various applications
 echo "Cleaning application cache..."
 sudo apt install -y bleachbit
-bleachbit --clean --preset
+bleachbit --clean --preset --no-gui
 
 # Remove temporary files
 echo "Removing temporary files..."

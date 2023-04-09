@@ -4,8 +4,8 @@
 # Function to check if the script is running with sudo rights
 check_sudo_rights() {
   if [[ $EUID -ne 0 ]]; then
-    echo "This script must be run with sudo rights. Please try again with 'sudo ./cleanup.sh'"
-    exit 1
+    echo "This script requires sudo rights. Restarting the script with sudo..."
+    exec sudo "$0" "$@"
   fi
 }
 

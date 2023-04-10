@@ -60,12 +60,12 @@ fi
 # Find all subfolders with a __manifest__.py file and create symlinks
 find "$src_folder" -type f -name "__manifest__.py" -exec dirname {} \; | while read -r folder; do
     folder_name=\$(basename "\$folder")
-    symlink_target="\$dest_folder/\$(basename "\$folder")"
+    symlink_target="\$dest_folder/\$folder_name"
 
     if [ -L "\$symlink_target" ]; then
         echo "Skipped symlink creation: \$symlink_target already exists"
     else
-        ln -s "\$folder" "\$symlink_target"
+        ln -s "\$(realpath "\$folder")" "\$symlink_target"
         echo "Created symlink: \$symlink_target -> \$folder"
     fi
 done

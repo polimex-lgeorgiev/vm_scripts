@@ -47,8 +47,8 @@ src_folder="${1:-/opt/odoo15/custom-addons}"
 dest_folder="${2:-/opt/odoo15/addons}"
 
 # Create a temporary script to run under the provided user
-temp_script=$(mktemp --tmpdir="$HOME" --suffix=".sh")
-cat << EOF > "$temp_script"
+temp_script=$(sudo -u "$user" mktemp --suffix=".sh")
+cat << EOF | sudo -u "$user" tee "$temp_script" > /dev/null
 #!/bin/bash
 
 # Check if folders exist
@@ -71,10 +71,10 @@ find "$src_folder" -type f -name "__manifest__.py" -exec dirname {} \; | while r
 done
 EOF
 
-chmod +x "$temp_script"
+sudo -u "$user" chmod +x "$temp_script"
 
 # Execute the temporary script as the provided user
 sudo -u "$user" "$temp_script"
 
 # Clean up the temporary script
-rm "$temp_script"
+sudo -u "$user" rm "$temp_script"

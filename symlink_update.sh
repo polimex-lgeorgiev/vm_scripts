@@ -57,11 +57,12 @@ sudo -u "$user" find "$src_folder" -type f -name "__manifest__.py" -exec dirname
     folder_name=$(basename "$folder")
     symlink_target="$dest_folder/$folder_name"
 
-    if [ -L "$symlink_target" ] || [ -d "$symlink_target" ]; then
-        echo "Removing existing symlink or directory: $symlink_target"
-        sudo -u "$user" rm -rf "$symlink_target"
+    if [ -L "$symlink_target" ] && [ "$(readlink -f "$symlink_target")" == "$(readlink -f "$folder")" ]; then
+        echo "Skipped symlink creation: $symlink_target already exists"
+    elif [ -d "$symlink_target" ]; then
+        echo "Skipped symlink creation: $symlink_target exists as a directory"
+    else
+        sudo -u "$user" ln -s "$folder" "$symlink_target"
+        echo "Created symlink: $symlink_target -> $folder"
     fi
-
-    sudo -u "$user" ln -s "$folder" "$symlink_target"
-    echo "Created symlink: $symlink_target -> $folder"
 done

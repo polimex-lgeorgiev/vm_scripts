@@ -46,35 +46,21 @@ shift $((OPTIND-1))
 src_folder="${1:-/opt/odoo15/custom-addons}"
 dest_folder="${2:-/opt/odoo15/addons}"
 
-# Create a temporary script to run under the provided user
-temp_script=$(sudo -u "$user" mktemp --suffix=".sh")
-cat << EOF | sudo -u "$user" tee "$temp_script" > /dev/null
-#!/bin/bash
-
-# Check if folders exist
-if [ ! -d "$src_folder" ] || [ ! -d "$dest_folder" ]; then
+# Check if folders exist under the specified user
+if ! sudo -u "$user" test -d "$src_folder" || ! sudo -u "$user" test -d "$dest_folder"; then
     echo "Error: Source or destination folder does not exist."
     exit 1
 fi
 
 # Find all subfolders with a __manifest__.py file and create symlinks
-find "$src_folder" -type f -name "__manifest__.py" -exec dirname {} \; | while read -r folder; do
-    folder_name=\$(basename "\$folder")
-    symlink_target="\$dest_folder/\$folder_name"
+sudo -u "$user" find "$src_folder" -type f -name "__manifest__.py" -exec dirname {} \; | while read -r folder; do
+    folder_name=$(basename "$folder")
+    symlink_target="$dest_folder/$folder_name"
 
-    if [ -L "\$symlink_target" ]; then
-        echo "Skipped symlink creation: \$symlink_target already exists"
+    if [ -L "$symlink_target" ]; then
+        echo "Skipped symlink creation: $symlink_target already exists"
     else
-        ln -s "\$(realpath "\$folder")" "\$symlink_target"
-        echo "Created symlink: \$symlink_target -> \$folder"
+        sudo -u "$user" ln -s "$folder" "$symlink_target"
+        echo "Created symlink: $symlink_target -> $folder"
     fi
 done
-EOF
-
-sudo -u "$user" chmod +x "$temp_script"
-
-# Execute the temporary script as the provided user
-sudo -u "$user" "$temp_script"
-
-# Clean up the temporary script
-sudo -u "$user" rm "$temp_script"

@@ -57,12 +57,11 @@ sudo -u "$user" find "$src_folder" -type f -name "__manifest__.py" -exec dirname
     folder_name=$(basename "$folder")
     symlink_target="$dest_folder/$folder_name"
 
-    if [ -L "$symlink_target" ] && [ "$(readlink -f "$symlink_target")" == "$(readlink -f "$folder")" ]; then
+    if sudo -u "$user" [ -L "$symlink_target" ] && [ "$(sudo -u "$user" readlink -f "$symlink_target")" == "$(sudo -u "$user" readlink -f "$folder")" ]; then
         echo "Skipped symlink creation: $symlink_target already exists"
-    elif [ -d "$symlink_target" ]; then
+    elif sudo -u "$user" [ -d "$symlink_target" ]; then
         echo "Skipped symlink creation: $symlink_target exists as a directory"
     else
-        sudo -u "$user" ln -s "$folder" "$symlink_target"
-        echo "Created symlink: $symlink_target -> $folder"
+        (sudo -u "$user" ln -s "$folder" "$symlink_target" && echo "Created symlink: $symlink_target -> $folder") || echo "Failed to create symlink: $symlink_target"
     fi
 done

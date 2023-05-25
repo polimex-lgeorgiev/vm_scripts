@@ -48,9 +48,9 @@ ODOO_SERVICE=odoo15
 ODOO_MODULE=${1:-hr_rfid}
 
 echo 'Downloading Polimex modules'
-sudo -H -u ${ODOO_USER} bash -c "cd /opt/${ODOO_USER}/custom-addons/polimex-rfid/ && git pull"
-LOCAL=$(git rev-parse @)
-REMOTE=$(git rev-parse @{u})
+sudo -H -u ${ODOO_USER} bash -c "cd /opt/${ODOO_USER}/custom-addons/polimex-rfid/ && git fetch"
+LOCAL=$(sudo -H -u ${ODOO_USER} bash -c "cd /opt/${ODOO_USER}/custom-addons/polimex-rfid/ && git rev-parse @")
+REMOTE=$(sudo -H -u ${ODOO_USER} bash -c "cd /opt/${ODOO_USER}/custom-addons/polimex-rfid/ && git rev-parse @{u}")
 
 if [ $LOCAL = $REMOTE ]; then
   echo "No updates available. Skipping module update and session removal."

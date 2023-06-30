@@ -57,7 +57,9 @@ if [ $LOCAL = $REMOTE ]; then
 else
   echo 'Stop Odoo Service before update'
   sudo systemctl stop ${ODOO_SERVICE}
-  echo 'Update symlinks iw new modules added'
+  echo 'Updates are available. Pulling changes from remote'
+  sudo -H -u ${ODOO_USER} bash -c "cd /opt/${ODOO_USER}/custom-addons/polimex-rfid/ && git pull"
+  echo 'Update symlinks iw new modules added (TODO)'
   echo 'Updating Polimex modules in database'
   sudo -H -u ${ODOO_USER} bash -c "/opt/${ODOO_USER}/venv/bin/python3 /opt/${ODOO_USER}/odoo/odoo-bin -d ${ODOO_DATABASE} --addons-path /opt/${ODOO_USER}/odoo/addons,/opt/${ODOO_USER}/addons -u ${ODOO_MODULE} --stop-after-init"
   echo 'Removing current Odoo sessions (need browser refresh)'

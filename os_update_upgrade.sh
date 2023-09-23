@@ -15,7 +15,6 @@ check_sudo_rights
 # Update package index
 echo "Updating package index..."
 sudo apt -y update && sudo apt -y upgrade
-sudo apt update -y
 
 # Remove old package files and cache
 echo "Removing old package files and cache..."

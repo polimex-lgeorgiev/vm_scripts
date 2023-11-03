@@ -46,11 +46,13 @@ while [[ "$#" -gt 0 ]]; do
             ODOO_DATABASE="$2"
             FORCE_UPDATE=true
             echo "FORCE_UPDATE set to $FORCE_UPDATE after option parsing"
-            shift 2
+            shift
+            shift
             ;;
         -m|--module)
             ODOO_MODULE="$2"
-            shift 2
+            shift
+            shift
             ;;
         *) echo "Unknown option: $1"; show_help; exit 1 ;;
     esac

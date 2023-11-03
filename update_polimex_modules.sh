@@ -21,7 +21,7 @@ function check_sudo() {
 function show_help() {
   echo "Polimex Holding Ltd."
   echo ""
-  echo "Usage: ./update_module.sh [options]"
+  echo "Usage: ./update_polimex_module.sh [options]"
   echo "Updates the specified Odoo module."
   echo ""
   echo "Options:"
@@ -29,9 +29,6 @@ function show_help() {
   echo "  -d, --database   Specify the Odoo database name to update. Default is '15_polimexodoo'."
   echo "  -m, --module     Specify the Odoo module name to update. Default is 'hr_rfid'."
 }
-
-# check for sudo rights
-check_sudo
 
 # default values
 DEFAULT_DATABASE='15_polimexodoo'
@@ -42,6 +39,7 @@ FORCE_UPDATE=false
 
 # Parse command line options
 while [[ "$#" -gt 0 ]]; do
+    echo "Current parameter: $1"  # Debug line
     case $1 in
         -h|--help) show_help; exit 0 ;;
         -d|--database) ODOO_DATABASE="$2"; FORCE_UPDATE=true; shift ;;
@@ -50,6 +48,9 @@ while [[ "$#" -gt 0 ]]; do
     esac
     shift
 done
+
+# check for sudo rights
+check_sudo
 
 # rest of the script variables
 ODOO_USER=odoo15

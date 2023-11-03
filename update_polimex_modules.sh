@@ -42,19 +42,29 @@ while [[ "$#" -gt 0 ]]; do
     echo "Current parameter: $1"  # Debug line
     case $1 in
         -h|--help) show_help; exit 0 ;;
-        -d|--database) ODOO_DATABASE="$2"; FORCE_UPDATE=true; shift ;;
-        -m|--module) ODOO_MODULE="$2"; shift ;;
+        -d|--database)
+            ODOO_DATABASE="$2"
+            FORCE_UPDATE=true
+            echo "FORCE_UPDATE set to $FORCE_UPDATE after option parsing"
+            shift 2
+            ;;
+        -m|--module)
+            ODOO_MODULE="$2"
+            shift 2
+            ;;
         *) echo "Unknown option: $1"; show_help; exit 1 ;;
     esac
     shift
 done
 
 # check for sudo rights
-check_sudo
+#check_sudo
 
 # rest of the script variables
 ODOO_USER=odoo15
 ODOO_SERVICE=odoo15
+
+echo "Force parameter: $FORCE_UPDATE"
 
 echo 'Downloading Polimex modules'
 sudo -H -u ${ODOO_USER} bash -c "cd /opt/${ODOO_USER}/custom-addons/polimex-rfid/ && git fetch"

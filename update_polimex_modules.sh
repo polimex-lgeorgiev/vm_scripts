@@ -21,47 +21,55 @@ function check_sudo() {
 function show_help() {
   echo "Polimex Holding Ltd."
   echo ""
-  echo "Usage: ./update_module.sh [module_name]"
-  echo "Updates the specified Odoo module or the default 'hr_rfid' module."
-  echo ""
-  echo "Arguments:"
-  echo "  module_name   The name of the module to update."
-  echo "                If not specified, the default 'hr_rfid' module will be updated."
+  echo "Usage: ./update_module.sh [options]"
+  echo "Updates the specified Odoo module."
   echo ""
   echo "Options:"
-  echo "  -h, --help    Display this help screen and exit."
+  echo "  -h, --help       Display this help screen and exit."
+  echo "  -d, --database   Specify the Odoo database name to update. Default is '15_polimexodoo'."
+  echo "  -m, --module     Specify the Odoo module name to update. Default is 'hr_rfid'."
 }
 
 # check for sudo rights
 check_sudo
 
-# check for help option
-if [[ $1 == "-h" || $1 == "--help" ]]; then
-  show_help
-  exit 0
-fi
+# default values
+DEFAULT_DATABASE='15_polimexodoo'
+DEFAULT_MODULE='hr_rfid'
+ODOO_DATABASE="$DEFAULT_DATABASE"
+ODOO_MODULE="$DEFAULT_MODULE"
+FORCE_UPDATE=false
 
-# vars
-ODOO_DATABASE=15_polimexodoo
+# Parse command line options
+while [[ "$#" -gt 0 ]]; do
+    case $1 in
+        -h|--help) show_help; exit 0 ;;
+        -d|--database) ODOO_DATABASE="$2"; FORCE_UPDATE=true; shift ;;
+        -m|--module) ODOO_MODULE="$2"; shift ;;
+        *) echo "Unknown option: $1"; show_help; exit 1 ;;
+    esac
+    shift
+done
+
+# rest of the script variables
 ODOO_USER=odoo15
 ODOO_SERVICE=odoo15
-ODOO_MODULE=${1:-hr_rfid}
 
 echo 'Downloading Polimex modules'
 sudo -H -u ${ODOO_USER} bash -c "cd /opt/${ODOO_USER}/custom-addons/polimex-rfid/ && git fetch"
 LOCAL=$(sudo -H -u ${ODOO_USER} bash -c "cd /opt/${ODOO_USER}/custom-addons/polimex-rfid/ && git rev-parse @")
 REMOTE=$(sudo -H -u ${ODOO_USER} bash -c "cd /opt/${ODOO_USER}/custom-addons/polimex-rfid/ && git rev-parse @{u}")
 
-if [ $LOCAL = $REMOTE ]; then
-  echo "No updates available. Skipping module update and session removal."
+if [ "$FORCE_UPDATE" = false ] && [ "$LOCAL" = "$REMOTE" ]; then
+  echo "No updates available for $ODOO_MODULE. Skipping module update and session removal."
 else
   echo 'Stop Odoo Service before update'
   sudo systemctl stop ${ODOO_SERVICE}
-  echo 'Updates are available. Pulling changes from remote'
+  echo 'Updates are available for $ODOO_MODULE. Pulling changes from remote'
   sudo -H -u ${ODOO_USER} bash -c "cd /opt/${ODOO_USER}/custom-addons/polimex-rfid/ && git pull"
-  echo 'Update symlinks iw new modules added (TODO)'
-  echo 'Updating Polimex modules in database'
-  sudo -H -u ${ODOO_USER} bash -c "/opt/${ODOO_USER}/venv/bin/python3 /opt/${ODOO_USER}/odoo/odoo-bin -d ${ODOO_DATABASE} --addons-path /opt/${ODOO_USER}/odoo/addons,/opt/${ODOO_USER}/addons -u ${ODOO_MODULE} --stop-after-init"
+  echo 'Update symlinks if new modules added (TODO)'
+  echo "Updating $ODOO_MODULE module in database $ODOO_DATABASE"
+  sudo -H -u ${ODOO_USER} bash -c "/opt/${ODOO_USER}/venv/bin/python3 /opt/${ODOO_USER}/odoo/odoo-bin -d ${ODOO_DATABASE} --addons-path /opt/${ODOO_USER}/odoo/addons -u ${ODOO_MODULE}"
   echo 'Removing current Odoo sessions (need browser refresh)'
   sudo -H -u ${ODOO_USER} bash -c "cd /opt/${ODOO_USER}/.local/share/Odoo/sessions/ && rm *.sess"
   sudo systemctl start ${ODOO_SERVICE}

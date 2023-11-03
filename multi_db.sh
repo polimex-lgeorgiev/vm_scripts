@@ -27,11 +27,13 @@ case "$1" in
         # Comment the db_name line
         sed -i "/^${DB_NAME_LINE}/s/^/;/" "$CONFIG_FILE"
         echo "db_name line has been commented."
+        systemctl restart odoo15
         ;;
     on)
         # Uncomment the db_name line
         sed -i "/^;${DB_NAME_LINE}/s/;//" "$CONFIG_FILE"
         echo "db_name line has been uncommented."
+        systemctl restart odoo15
         ;;
     *)
         print_usage

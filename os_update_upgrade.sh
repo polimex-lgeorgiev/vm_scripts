@@ -44,5 +44,12 @@ sudo find /var/log -type f -regex ".*\.[0-9]$" -delete
 echo "Emptying trash..."
 sudo rm -rf ~/.local/share/Trash/files/*
 
+echo "Clean Journal size ..."
+sudo journalctl --vacuum-size=500M
+
+echo "Clean up old versions of snaps"
+sudo snap set system refresh.retain=2
+
+
 echo "Cleanup complete!"
 

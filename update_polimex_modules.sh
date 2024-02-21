@@ -80,7 +80,7 @@ else
   sudo -H -u ${ODOO_USER} bash -c "cd /opt/${ODOO_USER}/custom-addons/polimex-rfid/ && git pull"
   echo 'Update symlinks if new modules added (TODO)'
   echo "Updating $ODOO_MODULE module in database $ODOO_DATABASE"
-  sudo -H -u ${ODOO_USER} bash -c "/opt/${ODOO_USER}/venv/bin/python3 /opt/${ODOO_USER}/odoo/odoo-bin -d ${ODOO_DATABASE} --addons-path /opt/${ODOO_USER}/odoo/addons -u ${ODOO_MODULE}"
+  sudo -H -u ${ODOO_USER} bash -c "/opt/${ODOO_USER}/venv/bin/python3 /opt/${ODOO_USER}/odoo/odoo-bin -d ${ODOO_DATABASE} --addons-path /opt/${ODOO_USER}/odoo/addons -u ${ODOO_MODULE} --stop-after-init"
   echo 'Removing current Odoo sessions (need browser refresh)'
   sudo -H -u ${ODOO_USER} bash -c "cd /opt/${ODOO_USER}/.local/share/Odoo/sessions/ && rm *.sess"
   sudo systemctl start ${ODOO_SERVICE}

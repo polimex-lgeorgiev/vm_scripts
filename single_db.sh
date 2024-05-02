@@ -19,7 +19,7 @@ if [ $# -eq 0 ]; then
     exit 1
 fi
 
-CONFIG_FILE="/etc/odoo15.conf"
+CONFIG_FILE="/etc/odoo17.conf"
 DB_NAME_LINE="db_name ="
 
 case "$1" in
@@ -27,13 +27,13 @@ case "$1" in
         # Comment the db_name line
         sed -i "/^${DB_NAME_LINE}/s/^/;/" "$CONFIG_FILE"
         echo "db_name line has been commented."
-        systemctl restart odoo15
+        systemctl restart odoo17
         ;;
     on)
         # Uncomment the db_name line
         sed -i "/^;${DB_NAME_LINE}/s/;//" "$CONFIG_FILE"
         echo "db_name line has been uncommented."
-        systemctl restart odoo15
+        systemctl restart odoo17
         ;;
     *)
         print_usage

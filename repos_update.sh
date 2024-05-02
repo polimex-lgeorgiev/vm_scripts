@@ -16,7 +16,7 @@ if [ $# -eq 1 ]; then
         echo "  This script searches for Git repositories in the specified directory and its subdirectories, excluding directories with the names 'odoo', 'polimex-rfid', and containing 'venv' in their names. It then updates each repository using 'git pull'."
         echo ""
         echo "Arguments:"
-        echo "  root_dir (optional) - The directory where the script will search for Git repositories. If not provided, the default value '/opt/odoo15/custom-addons' will be used. If this directory does not exist or there are multiple directories in /opt, the script will prompt the user to choose one."
+        echo "  root_dir (optional) - The directory where the script will search for Git repositories. If not provided, the default value '/opt/odoo17/custom-addons' will be used. If this directory does not exist or there are multiple directories in /opt, the script will prompt the user to choose one."
         echo ""
         echo "Options:"
         echo "  -h  Display this help message and exit."
@@ -26,7 +26,7 @@ if [ $# -eq 1 ]; then
     fi
 else
     # Set the default root directory
-    root_dir="/opt/odoo15/custom-addons"
+    root_dir="/opt/odoo17/custom-addons"
 fi
 
 # Check if root_dir exists or there are more than one folder in /opt

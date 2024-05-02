@@ -2,9 +2,9 @@
 
 # vars
 BACKUP_DIR=~/odoo_backups
-ODOO_DATABASE=15_polimexodoo
+ODOO_DATABASE=17_polimexodoo
 ODOO_HOST=localhost
-ODOO_PORT=8015
+ODOO_PORT=8017
 ADMIN_PASSWORD=dbadmin
 
 # create a backup directory

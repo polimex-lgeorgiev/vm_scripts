@@ -7,7 +7,7 @@ current_dir=$(pwd)
 find . -type d -name ".git" | while read git_dir; do
     repo_dir=$(dirname "$git_dir")
     echo "Pulling in $repo_dir"
-    cd "$current_dir/$repo_dir" && git pull
+    cd "$current_dir/$repo_dir" && git fetch --depth=1 && git pull && git clean -fdx && git fetch --depth=1 && git gc --prune=now --aggressive
 done
 
 # Return to the initial directory

@@ -1,0 +1,264 @@
+# Author: Polimex Dev Team
+# Description: Odoo 18 tools for backup/restore/logs using HTTP, configured for Polimex
+
+################################################################################
+# GLOBAL CONFIGURATION
+################################################################################
+ODOO_BIN_PATH=${ODOO_BIN_PATH:-/opt/odoo18/odoo/odoo-bin}
+ODOO_CONF_PATH=${ODOO_CONF_PATH:-/etc/odoo18.conf}
+ODOO_SERVICE_NAME=${ODOO_SERVICE_NAME:-odoo18}
+ODOO_LOG_PATH=${ODOO_LOG_PATH:-/var/log/odoo18.log}
+ODOO_USER=${ODOO_USER:-odoo18}
+ODOO_VENV=${ODOO_VENV:-/opt/odoo18/venv/bin/activate}
+BACKUP_DIR=${BACKUP_DIR:-/home/$USER/odoo_backups}
+MASTER_PWD=${MASTER_PWD:-dbadmin}
+DEFAULT_DB=${DEFAULT_DB:-18_polimexodoo}
+SOURCE_URL=${SOURCE_URL:-http://localhost}
+DEST_URL=${DEST_URL:-http://localhost}
+
+################################################################################
+# Utility: run_odoo
+################################################################################
+run_odoo() {
+    sudo -u "$ODOO_USER" bash -c "source $ODOO_VENV && $*"
+}
+
+################################################################################
+# odoo_restart [-h]
+################################################################################
+odoo_restart() {
+    if [[ "$1" == "-h" ]]; then
+        echo "Restart Odoo systemd service"
+        echo "Usage: odoo_restart"
+        return
+    fi
+    echo "Restarting Odoo service: $ODOO_SERVICE_NAME"
+    sudo systemctl restart "$ODOO_SERVICE_NAME"
+}
+
+################################################################################
+# odoo_logs [-h]
+################################################################################
+odoo_logs() {
+    if [[ "$1" == "-h" ]]; then
+        echo "Tail Odoo log file"
+        echo "Usage: odoo_logs"
+        return
+    fi
+    echo "Tailing log file: $ODOO_LOG_PATH"
+    sudo tail -f "$ODOO_LOG_PATH"
+}
+
+################################################################################
+# odoo_shell [-h]
+################################################################################
+odoo_shell() {
+    if [[ "$1" == "-h" ]]; then
+        echo "Open Odoo shell"
+        echo "Usage: odoo_shell"
+        return
+    fi
+    echo "Opening Odoo shell..."
+    run_odoo "$ODOO_BIN_PATH shell -c $ODOO_CONF_PATH"
+}
+
+################################################################################
+# odoo_backup_http [-h] [<db_name>]
+################################################################################
+odoo_backup_http() {
+    if [[ "$1" == "-h" ]]; then
+        echo "Create a backup via Odoo's web controller"
+        echo "Usage: odoo_backup_http [<db_name>]"
+        echo "Defaults to DB: $DEFAULT_DB"
+        return
+    fi
+    local db="${1:-$DEFAULT_DB}"
+    local timestamp=$(date +'%Y%m%d_%H%M%S')
+    local backup_file="${BACKUP_DIR}/backup_${db}_${timestamp}.zip"
+    echo "Creating backup for DB: $db -> $backup_file"
+    mkdir -p "$BACKUP_DIR"
+    curl --silent -X POST -F "master_pwd=$MASTER_PWD" -F "name=$db" -F "backup_format=zip" -o "$backup_file" "$SOURCE_URL/web/database/backup"
+    echo "Backup completed: $backup_file"
+}
+
+################################################################################
+# odoo_restore_http [-h] [<source_db>] [<dest_db>] [<backup_file>]
+################################################################################
+odoo_restore_http() {
+    if [[ "$1" == "-h" ]]; then
+        echo "Restore a DB from backup via Odoo's web controller"
+        echo "Usage: odoo_restore_http [<source_db>] [<dest_db>] [<backup_file>]"
+        echo "Defaults: source=$DEFAULT_DB, dest=${DEFAULT_DB}_restored"
+        return
+    fi
+    local source_db="${1:-$DEFAULT_DB}"
+    local dest_db="${2:-${DEFAULT_DB}_restored}"
+    local backup_file="$3"
+
+    if [ -z "$backup_file" ]; then
+        echo "Using latest backup from $BACKUP_DIR for DB: $source_db"
+        backup_file=$(ls -t ${BACKUP_DIR}/backup_${source_db}_*.zip 2>/dev/null | head -1)
+        if [ -z "$backup_file" ]; then
+            echo "No backup file found for $source_db"
+            return 1
+        fi
+    fi
+
+    echo "Terminating sessions and dropping DB: $dest_db"
+    sudo -u "$ODOO_USER" psql -d postgres -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${dest_db}' AND pid <> pg_backend_pid();"
+    sudo -u "$ODOO_USER" dropdb --if-exists "$dest_db"
+    sudo -u "$ODOO_USER" rm -rf "/opt/odoo18/.local/share/Odoo/filestore/$dest_db"
+
+    echo "Restoring $backup_file to $dest_db"
+    curl --silent -X POST -F "master_pwd=$MASTER_PWD" -F "backup_file=@${backup_file}" -F "name=$dest_db" -F "copy=true" -F "neutralize_database=on" "$DEST_URL/web/database/restore"
+
+    echo "Disabling emails and cron jobs"
+    sudo -u "$ODOO_USER" psql -d "$dest_db" -c "UPDATE ir_mail_server SET active = false;"
+    sudo -u "$ODOO_USER" psql -d "$dest_db" -c "UPDATE fetchmail_server SET active = false;"
+    sudo -u "$ODOO_USER" psql -d "$dest_db" -c "UPDATE ir_cron SET active = false;"
+    sudo -u "$ODOO_USER" psql -d "$dest_db" -c "UPDATE ir_config_parameter SET value = '$DEST_URL' WHERE key = 'web.base.url';"
+
+    echo "Restore complete: $dest_db"
+}
+
+################################################################################
+# odoo_start [-h]
+################################################################################
+odoo_start() {
+    if [[ "$1" == "-h" ]]; then
+        echo "Start Odoo systemd service"
+        echo "Usage: odoo_start"
+        return
+    fi
+    echo "Starting Odoo service: $ODOO_SERVICE_NAME"
+    sudo systemctl start "$ODOO_SERVICE_NAME"
+}
+
+################################################################################
+# odoo_stop [-h]
+################################################################################
+odoo_stop() {
+    if [[ "$1" == "-h" ]]; then
+        echo "Stop Odoo systemd service"
+        echo "Usage: odoo_stop"
+        return
+    fi
+    echo "Stopping Odoo service: $ODOO_SERVICE_NAME"
+    sudo systemctl stop "$ODOO_SERVICE_NAME"
+}
+
+
+################################################################################
+# odoo_module_install [-h] <module_name>
+################################################################################
+odoo_module_install() {
+    if [[ "$1" == "-h" || -z "$1" ]]; then
+        echo "Install an Odoo module"
+        echo "Usage: odoo_module_install <module_name>"
+        return
+    fi
+    local module="$1"
+    echo "Installing module: $module"
+    run_odoo "$ODOO_BIN_PATH -c $ODOO_CONF_PATH -i $module --stop-after-init"
+}
+
+################################################################################
+# odoo_module_update [-h] <module_name>
+################################################################################
+odoo_module_update() {
+    if [[ "$1" == "-h" || -z "$1" ]]; then
+        echo "Update an Odoo module"
+        echo "Usage: odoo_module_update <module_name>"
+        return
+    fi
+    local module="$1"
+    echo "Updating module: $module"
+    run_odoo "$ODOO_BIN_PATH -c $ODOO_CONF_PATH -u $module --stop-after-init"
+}
+
+################################################################################
+# odoo_module_uninstall [-h] <module_name>
+################################################################################
+odoo_module_uninstall() {
+    if [[ "$1" == "-h" || -z "$1" ]]; then
+        echo "Uninstall an Odoo module using the Odoo shell API"
+        echo "Usage: odoo_module_uninstall <module_name>"
+        return
+    fi
+    local module="$1"
+    echo "Uninstalling module via Odoo shell: $module"
+    run_odoo "$ODOO_BIN_PATH shell -c $ODOO_CONF_PATH -d $DEFAULT_DB -q -c \"
+env['ir.module.module'].search([('name', '=', '$module')]).button_immediate_uninstall()
+\""
+}
+
+################################################################################
+# odoo_update_polimex_modules [-h] [-d <database>] [-m <module>]
+################################################################################
+odoo_update_polimex_modules() {
+    local DEFAULT_DATABASE="${DEFAULT_DB}"
+    local DEFAULT_MODULE="hr_rfid"
+    local MODULE_PATH="/opt/${ODOO_USER}/custom-addons/polimex-rfid"
+    local ODOO_DATABASE="$DEFAULT_DATABASE"
+    local ODOO_MODULE="$DEFAULT_MODULE"
+    local FORCE_UPDATE=false
+
+    while [[ "$#" -gt 0 ]]; do
+        case $1 in
+            -h|--help)
+                echo "Usage: odoo_update_polimex_modules [options]"
+                echo "Options:"
+                echo "  -d, --database <name>   Specify the database to update (default: $DEFAULT_DATABASE)"
+                echo "  -m, --module <name>     Specify the module to update (default: $DEFAULT_MODULE)"
+                return 0
+                ;;
+            -d|--database)
+                if [ -n "$2" ]; then
+                    ODOO_DATABASE="$2"
+                    FORCE_UPDATE=true
+                    shift
+                else
+                    echo "Error: Missing argument for $1"
+                    return 1
+                fi
+                ;;
+            -m|--module)
+                if [ -n "$2" ]; then
+                    ODOO_MODULE="$2"
+                    shift
+                else
+                    echo "Error: Missing argument for $1"
+                    return 1
+                fi
+                ;;
+            *)
+                echo "Unknown option: $1"
+                return 1
+                ;;
+        esac
+        shift
+    done
+
+    echo "Downloading Polimex modules..."
+    sudo -u "${ODOO_USER}" bash -c "cd '${MODULE_PATH}' && git fetch"
+    LOCAL=$(sudo -u "${ODOO_USER}" bash -c "cd '${MODULE_PATH}' && git rev-parse @")
+    REMOTE=$(sudo -u "${ODOO_USER}" bash -c "cd '${MODULE_PATH}' && git rev-parse @{u}")
+
+    if [ "$FORCE_UPDATE" = false ] && [ "$LOCAL" = "$REMOTE" ]; then
+        echo "No updates for ${ODOO_MODULE}. Skipping."
+    else
+        echo "Stopping Odoo service..."
+        sudo systemctl stop "${ODOO_SERVICE_NAME}"
+        echo "Pulling latest changes for ${ODOO_MODULE}..."
+        sudo -u "${ODOO_USER}" bash -c "cd '${MODULE_PATH}' && git pull"
+        echo "Updating ${ODOO_MODULE} in DB ${ODOO_DATABASE}..."
+        run_odoo "$ODOO_BIN_PATH -d '${ODOO_DATABASE}' -u '${ODOO_MODULE}' --stop-after-init"
+        echo "Clearing sessions..."
+        sudo -u "${ODOO_USER}" bash -c "rm -f /opt/${ODOO_USER}/.local/share/Odoo/sessions/*.sess"
+        echo "Starting Odoo service..."
+        sudo systemctl start "${ODOO_SERVICE_NAME}"
+    fi
+
+    tail -f "${ODOO_LOG_PATH}"
+}
+

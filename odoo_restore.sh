@@ -2,9 +2,9 @@
 
 # vars
 BACKUP_DIR=~/odoo_backups
-ODOO_DATABASE=18_polimexodoo
+ODOO_DATABASE=19_polimexodoo
 ODOO_HOST=localhost
-ODOO_PORT=8018
+ODOO_PORT=8019
 ADMIN_PASSWORD=dbadmin
 
 if [ $# -eq 0 ]

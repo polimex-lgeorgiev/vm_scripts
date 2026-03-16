@@ -26,12 +26,12 @@ function show_help() {
   echo ""
   echo "Options:"
   echo "  -h, --help       Display this help screen and exit."
-  echo "  -d, --database   Specify the Odoo database name to update. Default is '18_polimexodoo'."
+  echo "  -d, --database   Specify the Odoo database name to update. Default is '19_polimexodoo'."
   echo "  -m, --module     Specify the Odoo module name to update. Default is 'hr_rfid'."
 }
 
 # default values
-DEFAULT_DATABASE='18_polimexodoo'
+DEFAULT_DATABASE='19_polimexodoo'
 DEFAULT_MODULE='hr_rfid'
 ODOO_DATABASE="$DEFAULT_DATABASE"
 ODOO_MODULE="$DEFAULT_MODULE"
@@ -61,8 +61,8 @@ done
 #check_sudo
 
 # rest of the script variables
-ODOO_USER=odoo18
-ODOO_SERVICE=odoo18
+ODOO_USER=odoo19
+ODOO_SERVICE=odoo19
 
 echo "Force parameter: $FORCE_UPDATE"
 

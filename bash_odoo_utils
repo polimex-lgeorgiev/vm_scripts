@@ -1,18 +1,18 @@
 # Author: Polimex Dev Team
-# Description: Odoo 18 tools for backup/restore/logs using HTTP, configured for Polimex
+# Description: Odoo 19 tools for backup/restore/logs using HTTP, configured for Polimex
 
 ################################################################################
 # GLOBAL CONFIGURATION
 ################################################################################
-ODOO_BIN_PATH=${ODOO_BIN_PATH:-/opt/odoo18/odoo/odoo-bin}
-ODOO_CONF_PATH=${ODOO_CONF_PATH:-/etc/odoo18.conf}
-ODOO_SERVICE_NAME=${ODOO_SERVICE_NAME:-odoo18}
-ODOO_LOG_PATH=${ODOO_LOG_PATH:-/var/log/odoo18.log}
-ODOO_USER=${ODOO_USER:-odoo18}
-ODOO_VENV=${ODOO_VENV:-/opt/odoo18/venv/bin/activate}
+ODOO_BIN_PATH=${ODOO_BIN_PATH:-/opt/odoo19/odoo/odoo-bin}
+ODOO_CONF_PATH=${ODOO_CONF_PATH:-/etc/odoo19.conf}
+ODOO_SERVICE_NAME=${ODOO_SERVICE_NAME:-odoo19}
+ODOO_LOG_PATH=${ODOO_LOG_PATH:-/var/log/odoo19.log}
+ODOO_USER=${ODOO_USER:-odoo19}
+ODOO_VENV=${ODOO_VENV:-/opt/odoo19/venv/bin/activate}
 BACKUP_DIR=${BACKUP_DIR:-/home/$USER/odoo_backups}
 MASTER_PWD=${MASTER_PWD:-dbadmin}
-DEFAULT_DB=${DEFAULT_DB:-18_polimexodoo}
+DEFAULT_DB=${DEFAULT_DB:-19_polimexodoo}
 SOURCE_URL=${SOURCE_URL:-http://localhost}
 DEST_URL=${DEST_URL:-http://localhost}
 
@@ -107,7 +107,7 @@ odoo_restore_http() {
     echo "Terminating sessions and dropping DB: $dest_db"
     sudo -u "$ODOO_USER" psql -d postgres -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${dest_db}' AND pid <> pg_backend_pid();"
     sudo -u "$ODOO_USER" dropdb --if-exists "$dest_db"
-    sudo -u "$ODOO_USER" rm -rf "/opt/odoo18/.local/share/Odoo/filestore/$dest_db"
+    sudo -u "$ODOO_USER" rm -rf "/opt/odoo19/.local/share/Odoo/filestore/$dest_db"
 
     echo "Restoring $backup_file to $dest_db"
     curl --silent -X POST -F "master_pwd=$MASTER_PWD" -F "backup_file=@${backup_file}" -F "name=$dest_db" -F "copy=true" -F "neutralize_database=on" "$DEST_URL/web/database/restore"

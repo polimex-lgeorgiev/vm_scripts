@@ -1,9 +1,9 @@
 #!/bin/bash
 
 # vars
-ODOO_DATABASE=18_polimexodoo
-ODOO_USER=odoo18
-ODOO_SERVICE=odoo18
+ODOO_DATABASE=19_polimexodoo
+ODOO_USER=odoo19
+ODOO_SERVICE=odoo19
 ODOO_MODULE=ichecker
 
 echo 'Stop Odoo Service before update'

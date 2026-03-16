@@ -21,7 +21,7 @@ elif [[ $# -eq 2 ]]; then
 fi
 
 # Predefined arrays for branches and repositories
-declare -a branches=("14.0" "15.0" "16.0")
+declare -a branches=("14.0" "15.0" "16.0" "17.0" "18.0" "19.0")
 declare -a repos=(
     "https://github.com/polimex/polimex-rfid.git"
     "https://github.com/OCA/OCB.git"

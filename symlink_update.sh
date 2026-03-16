@@ -5,17 +5,17 @@ usage() {
     echo "Usage: $0 [-u user] [source_folder] [destination_folder]"
     echo
     echo "Options:"
-    echo "  -u  Run the script as a specific user (default: odoo18)"
+    echo "  -u  Run the script as a specific user (default: odoo19)"
     echo "  -h, --help  Show help information"
     echo
     echo "This script creates symlinks for all subfolders containing a __manifest__.py file."
-    echo "Default source folder: /opt/odoo18/custom-addons"
-    echo "Default destination folder: /opt/odoo18/addons"
+    echo "Default source folder: /opt/odoo19/custom-addons"
+    echo "Default destination folder: /opt/odoo19/addons"
     exit 1
 }
 
 # Parse command-line options
-user="odoo18"
+user="odoo19"
 while getopts ":u:-:" opt; do
     case $opt in
         u)
@@ -43,8 +43,8 @@ done
 shift $((OPTIND-1))
 
 # Set default source and destination folder values if not provided
-src_folder="${1:-/opt/odoo18/custom-addons}"
-dest_folder="${2:-/opt/odoo18/addons}"
+src_folder="${1:-/opt/odoo19/custom-addons}"
+dest_folder="${2:-/opt/odoo19/addons}"
 
 # Check if folders exist under the specified user
 if ! sudo -u "$user" test -d "$src_folder" || ! sudo -u "$user" test -d "$dest_folder"; then

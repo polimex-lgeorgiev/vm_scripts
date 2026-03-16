@@ -543,7 +543,7 @@ odoo_logs() {
         lines="$2"
     fi
     print_info "Tailing log file: $ODOO_LOG_PATH (last $lines lines)"
-    sudo tail -f -n "$lines" "$ODOO_LOG_PATH"
+    tail -f -n "$lines" "$ODOO_LOG_PATH"
 }
 
 ################################################################################
@@ -562,7 +562,7 @@ odoo_errors() {
     fi
     print_info "Last $count errors/warnings from $ODOO_LOG_PATH:"
     echo ""
-    sudo grep -E '\b(ERROR|WARNING|CRITICAL)\b' "$ODOO_LOG_PATH" | tail -n "$count" | while IFS= read -r line; do
+    grep -E '\b(ERROR|WARNING|CRITICAL)\b' "$ODOO_LOG_PATH" | tail -n "$count" | while IFS= read -r line; do
         if echo "$line" | grep -qE '\bCRITICAL\b'; then
             echo -e "${_RED}${_BOLD}${line}${_NC}"
         elif echo "$line" | grep -qE '\bERROR\b'; then

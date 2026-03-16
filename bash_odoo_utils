@@ -586,7 +586,7 @@ _log_filter() {
         cmd+=" | grep '^[0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\} '"
     fi
 
-    eval "$cmd" 2>/dev/null
+    eval "$cmd" 2>/dev/null || true
 }
 
 # _colorize_log — colorize log lines by level

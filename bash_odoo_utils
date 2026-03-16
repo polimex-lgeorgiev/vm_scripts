@@ -530,47 +530,392 @@ odoo_stop() {
 }
 
 ################################################################################
-# odoo_logs [-h] [-n LINES]
+# LOG ANALYSIS FUNCTIONS
+# Inspired by odoo_logs.py — local versions for on-premise VM use
+################################################################################
+
+# _log_filter — internal helper to build a filtered log stream
+# Usage: _log_filter [--level LEVEL] [--since DATETIME] [--until DATETIME]
+#                    [--module MODULE] [--pattern PATTERN] [--no-traceback]
+# Outputs filtered lines to stdout
+_log_filter() {
+    local level="" since="" until="" module="" pattern="" no_traceback=true
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --level)        level="$2"; shift ;;
+            --since)        since="$2"; shift ;;
+            --until)        until="$2"; shift ;;
+            --module)       module="$2"; shift ;;
+            --pattern)      pattern="$2"; shift ;;
+            --traceback)    no_traceback=false ;;
+            --no-traceback) no_traceback=true ;;
+        esac
+        shift
+    done
+
+    local cmd="cat '$ODOO_LOG_PATH'"
+
+    # Level filter (ERROR, WARNING, INFO, DEBUG)
+    if [[ -n "$level" ]]; then
+        cmd+=" | grep ' ${level} '"
+    fi
+
+    # Module filter (e.g., odoo.addons.sale, werkzeug)
+    if [[ -n "$module" ]]; then
+        cmd+=" | grep '${module}:'"
+    fi
+
+    # Pattern filter (case insensitive)
+    if [[ -n "$pattern" ]]; then
+        cmd+=" | grep -i '${pattern}'"
+    fi
+
+    # Time range filters via awk
+    if [[ -n "$since" || -n "$until" ]]; then
+        local awk_cond=""
+        [[ -n "$since" ]] && awk_cond="\$1\" \"\$2 >= \"${since}\""
+        if [[ -n "$until" ]]; then
+            [[ -n "$awk_cond" ]] && awk_cond+=" && "
+            awk_cond+="\$1\" \"\$2 <= \"${until}\""
+        fi
+        cmd+=" | awk '/^[0-9]{4}-[0-9]{2}-[0-9]{2}/ && ${awk_cond} {print; next} !/^[0-9]{4}-[0-9]{2}-[0-9]{2}/ {print}'"
+    fi
+
+    # Strip traceback continuation lines (keep only dated log lines)
+    if [[ "$no_traceback" == "true" ]]; then
+        cmd+=" | grep '^[0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\} '"
+    fi
+
+    eval "$cmd" 2>/dev/null
+}
+
+# _colorize_log — colorize log lines by level
+_colorize_log() {
+    while IFS= read -r line; do
+        if [[ "$line" == *" CRITICAL "* ]]; then
+            echo -e "${_RED}${_BOLD}${line}${_NC}"
+        elif [[ "$line" == *" ERROR "* ]]; then
+            echo -e "${_RED}${line}${_NC}"
+        elif [[ "$line" == *" WARNING "* ]]; then
+            echo -e "${_YELLOW}${line}${_NC}"
+        else
+            echo "$line"
+        fi
+    done
+}
+
+################################################################################
+# odoo_logs [-h] [-n LINES] [-f]
 ################################################################################
 odoo_logs() {
     if [[ "${1:-}" == "-h" ]]; then
         echo "Tail Odoo log file"
-        echo "Usage: odoo_logs [-n LINES]"
+        echo "Usage: odoo_logs [-n LINES] [-f]"
+        echo "  -f  Follow mode (live tail, default)"
+        echo "  Without -f: show last N lines and exit"
         return
     fi
-    local lines=50
-    if [[ "${1:-}" == "-n" && -n "${2:-}" ]]; then
-        lines="$2"
+    local lines=50 follow=true
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -n) lines="$2"; shift ;;
+            -f) follow=true ;;
+            --no-follow) follow=false ;;
+        esac
+        shift
+    done
+    if [[ "$follow" == "true" ]]; then
+        print_info "Tailing log file: $ODOO_LOG_PATH (last $lines lines)"
+        tail -f -n "$lines" "$ODOO_LOG_PATH"
+    else
+        tail -n "$lines" "$ODOO_LOG_PATH" | _colorize_log
     fi
-    print_info "Tailing log file: $ODOO_LOG_PATH (last $lines lines)"
-    tail -f -n "$lines" "$ODOO_LOG_PATH"
 }
 
 ################################################################################
-# odoo_errors [-h] [-n COUNT] — show last N errors and warnings from log
+# odoo_errors [-h] [-n COUNT] [--since DATETIME] [--until DATETIME]
+#             [--module MODULE] [--traceback] [--count]
 ################################################################################
 odoo_errors() {
     if [[ "${1:-}" == "-h" ]]; then
-        echo "Show last N errors and warnings from Odoo log"
-        echo "Usage: odoo_errors [-n COUNT]"
-        echo "Default: last 20 errors/warnings"
+        echo "Show last N errors from Odoo log"
+        echo "Usage: odoo_errors [-n COUNT] [--since DATETIME] [--until DATETIME]"
+        echo "                   [--module MODULE] [--traceback] [--count]"
+        echo ""
+        echo "Options:"
+        echo "  -n COUNT           Number of entries (default: 20)"
+        echo "  --since DATETIME   Start time (e.g., '2026-03-16' or '2026-03-16 10:00')"
+        echo "  --until DATETIME   End time"
+        echo "  --module MODULE    Filter by Odoo module (e.g., odoo.addons.sale)"
+        echo "  --traceback        Include traceback lines"
+        echo "  --count            Only show count"
         return
     fi
-    local count=20
-    if [[ "${1:-}" == "-n" && -n "${2:-}" ]]; then
-        count="$2"
-    fi
-    print_info "Last $count errors/warnings from $ODOO_LOG_PATH:"
-    echo ""
-    grep -E '\b(ERROR|WARNING|CRITICAL)\b' "$ODOO_LOG_PATH" | tail -n "$count" | while IFS= read -r line; do
-        if echo "$line" | grep -qE '\bCRITICAL\b'; then
-            echo -e "${_RED}${_BOLD}${line}${_NC}"
-        elif echo "$line" | grep -qE '\bERROR\b'; then
-            echo -e "${_RED}${line}${_NC}"
-        else
-            echo -e "${_YELLOW}${line}${_NC}"
-        fi
+    local count=20 since="" until="" module="" traceback_flag="--no-traceback" count_only=false
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -n)          count="$2"; shift ;;
+            --since)     since="$2"; shift ;;
+            --until)     until="$2"; shift ;;
+            --module)    module="$2"; shift ;;
+            --traceback) traceback_flag="--traceback" ;;
+            --count)     count_only=true ;;
+        esac
+        shift
     done
+
+    local filter_args=(--level ERROR "$traceback_flag")
+    [[ -n "$since" ]] && filter_args+=(--since "$since")
+    [[ -n "$until" ]] && filter_args+=(--until "$until")
+    [[ -n "$module" ]] && filter_args+=(--module "$module")
+
+    if [[ "$count_only" == "true" ]]; then
+        local num
+        num=$(_log_filter "${filter_args[@]}" | wc -l)
+        print_info "Error count: $num"
+        return
+    fi
+
+    print_info "Last $count errors from $ODOO_LOG_PATH:"
+    echo ""
+    _log_filter "${filter_args[@]}" | tail -n "$count" | _colorize_log
+}
+
+################################################################################
+# odoo_warnings [-h] [-n COUNT] [--since] [--until] [--module] [--count]
+################################################################################
+odoo_warnings() {
+    if [[ "${1:-}" == "-h" ]]; then
+        echo "Show last N warnings from Odoo log"
+        echo "Usage: odoo_warnings [-n COUNT] [--since DATETIME] [--until DATETIME]"
+        echo "                     [--module MODULE] [--count]"
+        return
+    fi
+    local count=20 since="" until="" module="" count_only=false
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -n)       count="$2"; shift ;;
+            --since)  since="$2"; shift ;;
+            --until)  until="$2"; shift ;;
+            --module) module="$2"; shift ;;
+            --count)  count_only=true ;;
+        esac
+        shift
+    done
+
+    local filter_args=(--level WARNING --no-traceback)
+    [[ -n "$since" ]] && filter_args+=(--since "$since")
+    [[ -n "$until" ]] && filter_args+=(--until "$until")
+    [[ -n "$module" ]] && filter_args+=(--module "$module")
+
+    if [[ "$count_only" == "true" ]]; then
+        local num
+        num=$(_log_filter "${filter_args[@]}" | wc -l)
+        print_info "Warning count: $num"
+        return
+    fi
+
+    print_info "Last $count warnings from $ODOO_LOG_PATH:"
+    echo ""
+    _log_filter "${filter_args[@]}" | tail -n "$count" | _colorize_log
+}
+
+################################################################################
+# odoo_log_search [-h] -p PATTERN [-n COUNT] [--level] [--since] [--until]
+#                 [--module] [--traceback]
+################################################################################
+odoo_log_search() {
+    if [[ "${1:-}" == "-h" ]]; then
+        echo "Search for a pattern in Odoo logs (case insensitive)"
+        echo "Usage: odoo_log_search -p PATTERN [-n COUNT] [--level LEVEL]"
+        echo "                       [--since DATETIME] [--until DATETIME]"
+        echo "                       [--module MODULE] [--traceback]"
+        return
+    fi
+    local pattern="" count=50 level="" since="" until="" module="" traceback_flag="--no-traceback"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -p|--pattern) pattern="$2"; shift ;;
+            -n)           count="$2"; shift ;;
+            --level)      level="$2"; shift ;;
+            --since)      since="$2"; shift ;;
+            --until)      until="$2"; shift ;;
+            --module)     module="$2"; shift ;;
+            --traceback)  traceback_flag="--traceback" ;;
+        esac
+        shift
+    done
+
+    if [[ -z "$pattern" ]]; then
+        print_error "Pattern is required: odoo_log_search -p PATTERN"
+        return 1
+    fi
+
+    local filter_args=(--pattern "$pattern" "$traceback_flag")
+    [[ -n "$level" ]] && filter_args+=(--level "$level")
+    [[ -n "$since" ]] && filter_args+=(--since "$since")
+    [[ -n "$until" ]] && filter_args+=(--until "$until")
+    [[ -n "$module" ]] && filter_args+=(--module "$module")
+
+    print_info "Searching for '${pattern}' (last $count matches):"
+    echo ""
+    _log_filter "${filter_args[@]}" | tail -n "$count" | _colorize_log
+}
+
+################################################################################
+# odoo_log_summary [-h] [--since DATETIME] [--until DATETIME]
+################################################################################
+odoo_log_summary() {
+    if [[ "${1:-}" == "-h" ]]; then
+        echo "Show log statistics summary"
+        echo "Usage: odoo_log_summary [--since DATETIME] [--until DATETIME]"
+        return
+    fi
+    local since="" until=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --since) since="$2"; shift ;;
+            --until) until="$2"; shift ;;
+        esac
+        shift
+    done
+
+    local filter_args=(--no-traceback)
+    [[ -n "$since" ]] && filter_args+=(--since "$since")
+    [[ -n "$until" ]] && filter_args+=(--until "$until")
+
+    print_step "Log Summary: $ODOO_LOG_PATH"
+
+    # File info
+    local file_size
+    file_size=$(du -h "$ODOO_LOG_PATH" 2>/dev/null | cut -f1)
+    local log_start log_end
+    log_start=$(head -1 "$ODOO_LOG_PATH" 2>/dev/null | cut -d',' -f1)
+    log_end=$(tail -1 "$ODOO_LOG_PATH" 2>/dev/null | cut -d',' -f1)
+    echo -e "  ${_BOLD}File size:${_NC}  $file_size"
+    echo -e "  ${_BOLD}Log range:${_NC}  $log_start → $log_end"
+    [[ -n "$since" ]] && echo -e "  ${_BOLD}Since:${_NC}      $since"
+    [[ -n "$until" ]] && echo -e "  ${_BOLD}Until:${_NC}      $until"
+    echo ""
+
+    # Counts
+    local total errors warnings info
+    total=$(_log_filter "${filter_args[@]}" | wc -l)
+    errors=$(_log_filter "${filter_args[@]}" --level ERROR | wc -l)
+    warnings=$(_log_filter "${filter_args[@]}" --level WARNING | wc -l)
+    info=$(_log_filter "${filter_args[@]}" --level INFO | wc -l)
+
+    echo -e "  ${_BOLD}Total lines:${_NC}  $total"
+    echo -e "  ${_RED}Errors:${_NC}       $errors"
+    echo -e "  ${_YELLOW}Warnings:${_NC}     $warnings"
+    echo -e "  ${_BLUE}Info:${_NC}         $info"
+    echo ""
+
+    # Top error modules
+    if [[ "$errors" -gt 0 ]]; then
+        echo -e "  ${_RED}${_BOLD}Top error modules:${_NC}"
+        _log_filter "${filter_args[@]}" --level ERROR \
+            | grep -oP '\d+ ERROR \S+ \K\S+' | sed 's/:$//' \
+            | sort | uniq -c | sort -rn | head -10 | while read -r cnt mod; do
+                printf "    %5d  %s\n" "$cnt" "$mod"
+            done
+        echo ""
+    fi
+
+    # Top warning modules
+    if [[ "$warnings" -gt 0 ]]; then
+        echo -e "  ${_YELLOW}${_BOLD}Top warning modules:${_NC}"
+        _log_filter "${filter_args[@]}" --level WARNING \
+            | grep -oP '\d+ WARNING \S+ \K\S+' | sed 's/:$//' \
+            | sort | uniq -c | sort -rn | head -10 | while read -r cnt mod; do
+                printf "    %5d  %s\n" "$cnt" "$mod"
+            done
+        echo ""
+    fi
+}
+
+################################################################################
+# odoo_log_cron [-h] [-n COUNT] [--since DATETIME] [--until DATETIME]
+################################################################################
+odoo_log_cron() {
+    if [[ "${1:-}" == "-h" ]]; then
+        echo "Show cron job activity from Odoo log"
+        echo "Usage: odoo_log_cron [-n COUNT] [--since DATETIME] [--until DATETIME]"
+        return
+    fi
+    local count=20 since="" until=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -n)      count="$2"; shift ;;
+            --since) since="$2"; shift ;;
+            --until) until="$2"; shift ;;
+        esac
+        shift
+    done
+
+    local filter_args=(--pattern "ir_cron" --no-traceback)
+    [[ -n "$since" ]] && filter_args+=(--since "$since")
+    [[ -n "$until" ]] && filter_args+=(--until "$until")
+
+    print_info "Last $count cron entries:"
+    echo ""
+    _log_filter "${filter_args[@]}" | tail -n "$count" | _colorize_log
+}
+
+################################################################################
+# odoo_log_slow [-h] [-n COUNT] [-t THRESHOLD] [--since DATETIME]
+################################################################################
+odoo_log_slow() {
+    if [[ "${1:-}" == "-h" ]]; then
+        echo "Show slow HTTP requests from Odoo log"
+        echo "Usage: odoo_log_slow [-n COUNT] [-t SECONDS] [--since DATETIME]"
+        echo ""
+        echo "Options:"
+        echo "  -n COUNT       Number of entries (default: 20)"
+        echo "  -t SECONDS     Threshold in seconds (default: 5.0)"
+        echo "  --since DATE   Start time filter"
+        return
+    fi
+    local count=20 threshold=5.0 since=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -n)      count="$2"; shift ;;
+            -t)      threshold="$2"; shift ;;
+            --since) since="$2"; shift ;;
+        esac
+        shift
+    done
+
+    local filter_args=(--pattern "werkzeug:" --no-traceback)
+    [[ -n "$since" ]] && filter_args+=(--since "$since")
+
+    print_info "Slow requests (>${threshold}s), last $count:"
+    echo ""
+    _log_filter "${filter_args[@]}" \
+        | awk -v thresh="$threshold" '{n=split($0,a," "); qt=a[n-1]; if (qt+0 >= thresh) print}' \
+        | tail -n "$count" | while IFS= read -r line; do
+            # Extract the query time (second to last field) and highlight it
+            local qt
+            qt=$(echo "$line" | awk '{print $(NF-1)}')
+            echo -e "${_RED}[${qt}s]${_NC} $line"
+        done
+}
+
+################################################################################
+# odoo_log_databases [-h] — list databases found in log
+################################################################################
+odoo_log_databases() {
+    if [[ "${1:-}" == "-h" ]]; then
+        echo "List databases found in the Odoo log file"
+        echo "Usage: odoo_log_databases"
+        return
+    fi
+    print_info "Databases in $ODOO_LOG_PATH:"
+    echo ""
+    grep -oP '^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d+ \d+ \w+ \K\S+' "$ODOO_LOG_PATH" \
+        | sort -u | while read -r db; do
+            [[ "$db" != "?" ]] && echo "  $db"
+        done
 }
 
 ################################################################################

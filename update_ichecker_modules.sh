@@ -1,18 +1,22 @@
 #!/bin/bash
+# Copyright (C) 2023-2026 Polimex Holding Ltd. All rights reserved.
+# Website: https://polimex.co
+#
+# PROPRIETARY AND CONFIDENTIAL
+# Unauthorized copying, modification, distribution, or use is strictly prohibited.
+#
+# Author: Polimex Dev Team
+# Description: Update ichecker module from Git and restart Odoo
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/bash_odoo_utils"
+parse_common_args "$@"
+set -- "${REMAINING_ARGS[@]+"${REMAINING_ARGS[@]}"}"
 
-# vars
-ODOO_DATABASE=19_polimexodoo
-ODOO_USER=odoo19
-ODOO_SERVICE=odoo19
-ODOO_MODULE=ichecker
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+    echo "Usage: $0 [--dry-run] [--verbose] [-d DATABASE] [-m MODULE] [--force]"
+    echo "Updates the ichecker module. Default module: ichecker"
+    exit 0
+fi
 
-echo 'Stop Odoo Service before update'
-sudo systemctl stop ${ODOO_SERVICE}
-echo 'Downloading Polimex modules'
-sudo -H -u ${ODOO_USER} bash -c "cd /opt/${ODOO_USER}/custom-addons/ichecker/ && git pull"
-echo 'Updating Polimex modules in database'
-sudo -H -u ${ODOO_USER} bash -c "/opt/${ODOO_USER}/venv/bin/python3 /opt/${ODOO_USER}/odoo/odoo-bin -d ${ODOO_DATABASE} --addons-path /opt/${ODOO_USER}/odoo/addons,/opt/${ODOO_USER}/addons -u ${ODOO_MODULE} --stop-after-init"
-echo 'Removing current Odoo sessions (need browser refresh)'
-sudo -H -u ${ODOO_USER} bash -c "cd /opt/${ODOO_USER}/.local/share/Odoo/sessions/ && rm *.sess"
-sudo systemctl start ${ODOO_SERVICE}
-tail -f /var/log/${ODOO_USER}.log
+update_custom_module -m ichecker -r "${ODOO_CUSTOM_ADDONS}/ichecker" "$@"

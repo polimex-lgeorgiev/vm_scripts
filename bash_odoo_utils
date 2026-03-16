@@ -1,5 +1,15 @@
+# Copyright (C) 2023-2026 Polimex Holding Ltd. All rights reserved.
+# Website: https://polimex.co
+#
+# PROPRIETARY AND CONFIDENTIAL
+# This software is the exclusive property of Polimex Holding Ltd.
+# Unauthorized copying, modification, distribution, or use of this software,
+# in whole or in part, is strictly prohibited without prior written permission
+# from Polimex Holding Ltd.
+#
 # Author: Polimex Dev Team
 # Description: Odoo 19 tools for backup/restore/logs using HTTP, configured for Polimex
+# This file is sourced from .bashrc — do NOT use set -euo pipefail or exit here.
 
 ################################################################################
 # GLOBAL CONFIGURATION
@@ -10,16 +20,458 @@ ODOO_SERVICE_NAME=${ODOO_SERVICE_NAME:-odoo19}
 ODOO_LOG_PATH=${ODOO_LOG_PATH:-/var/log/odoo19.log}
 ODOO_USER=${ODOO_USER:-odoo19}
 ODOO_VENV=${ODOO_VENV:-/opt/odoo19/venv/bin/activate}
+ODOO_FILESTORE_PATH=${ODOO_FILESTORE_PATH:-/opt/${ODOO_USER}/.local/share/Odoo/filestore}
+ODOO_SESSIONS_PATH=${ODOO_SESSIONS_PATH:-/opt/${ODOO_USER}/.local/share/Odoo/sessions}
+ODOO_CUSTOM_ADDONS=${ODOO_CUSTOM_ADDONS:-/opt/${ODOO_USER}/custom-addons}
+ODOO_ADDONS_DIR=${ODOO_ADDONS_DIR:-/opt/${ODOO_USER}/addons}
+ODOO_HTTP_PORT=${ODOO_HTTP_PORT:-8069}
 BACKUP_DIR=${BACKUP_DIR:-/home/$USER/odoo_backups}
+BACKUP_RETENTION_DAYS=${BACKUP_RETENTION_DAYS:-7}
 MASTER_PWD=${MASTER_PWD:-dbadmin}
 DEFAULT_DB=${DEFAULT_DB:-19_polimexodoo}
-SOURCE_URL=${SOURCE_URL:-http://localhost}
-DEST_URL=${DEST_URL:-http://localhost}
+SOURCE_URL=${SOURCE_URL:-http://localhost:${ODOO_HTTP_PORT}}
+DEST_URL=${DEST_URL:-http://localhost:${ODOO_HTTP_PORT}}
+HEALTH_CHECK_TIMEOUT=${HEALTH_CHECK_TIMEOUT:-60}
+
+# Global flags (set by parse_common_args or manually)
+DRY_RUN=${DRY_RUN:-false}
+VERBOSE=${VERBOSE:-false}
+NO_CONFIRM=${NO_CONFIRM:-false}
+
+################################################################################
+# COLOR / OUTPUT
+################################################################################
+# Colors only when outputting to a terminal
+if [[ -t 1 ]]; then
+    _RED='\033[0;31m'
+    _GREEN='\033[0;32m'
+    _YELLOW='\033[1;33m'
+    _BLUE='\033[0;34m'
+    _CYAN='\033[0;36m'
+    _BOLD='\033[1m'
+    _NC='\033[0m'
+else
+    _RED='' _GREEN='' _YELLOW='' _BLUE='' _CYAN='' _BOLD='' _NC=''
+fi
+
+print_error()   { echo -e "${_RED}[ERROR]${_NC} $*" >&2; }
+print_success() { echo -e "${_GREEN}[OK]${_NC} $*"; }
+print_warning() { echo -e "${_YELLOW}[WARN]${_NC} $*"; }
+print_info()    { echo -e "${_BLUE}[INFO]${_NC} $*"; }
+print_step()    { echo -e "${_BOLD}${_CYAN}==>${_NC} ${_BOLD}$*${_NC}"; }
+print_dry_run() { echo -e "${_YELLOW}[DRY RUN]${_NC} Would: $*"; }
+
+################################################################################
+# COMMON ARGS PARSER
+# Usage: parse_common_args "$@" then set -- "${REMAINING_ARGS[@]+"${REMAINING_ARGS[@]}"}"
+################################################################################
+parse_common_args() {
+    REMAINING_ARGS=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --dry-run)  DRY_RUN=true ;;
+            --verbose)  VERBOSE=true ;;
+            --yes|-y)   NO_CONFIRM=true ;;
+            *)          REMAINING_ARGS+=("$1") ;;
+        esac
+        shift
+    done
+}
+
+################################################################################
+# ERROR HANDLING & PROMPTS
+################################################################################
+# error_exit MESSAGE — prints error and returns 1 (no exit, safe for sourced files)
+error_exit() {
+    print_error "$*"
+    return 1
+}
+
+# confirm_action MESSAGE — asks user to confirm, respects DRY_RUN and NO_CONFIRM
+# Returns 0 if confirmed, 1 if declined
+confirm_action() {
+    local message="${1:-Continue?}"
+    if [[ "$DRY_RUN" == "true" ]]; then
+        print_dry_run "$message"
+        return 1
+    fi
+    if [[ "$NO_CONFIRM" == "true" ]]; then
+        return 0
+    fi
+    echo -en "${_YELLOW}[CONFIRM]${_NC} ${message} [y/N] "
+    read -r answer
+    [[ "$answer" =~ ^[Yy]$ ]]
+}
+
+# format_size BYTES — human-readable file size
+format_size() {
+    local bytes="${1:-0}"
+    if [[ "$bytes" -ge 1073741824 ]]; then
+        echo "$(( bytes / 1073741824 )) GB"
+    elif [[ "$bytes" -ge 1048576 ]]; then
+        echo "$(( bytes / 1048576 )) MB"
+    elif [[ "$bytes" -ge 1024 ]]; then
+        echo "$(( bytes / 1024 )) KB"
+    else
+        echo "${bytes} B"
+    fi
+}
+
+# format_duration SECONDS — human-readable duration
+format_duration() {
+    local secs="${1:-0}"
+    if [[ "$secs" -ge 3600 ]]; then
+        printf '%dh %dm %ds' $((secs/3600)) $((secs%3600/60)) $((secs%60))
+    elif [[ "$secs" -ge 60 ]]; then
+        printf '%dm %ds' $((secs/60)) $((secs%60))
+    else
+        printf '%ds' "$secs"
+    fi
+}
+
+################################################################################
+# SYSTEM UTILITIES
+################################################################################
+# check_disk_space PATH MIN_MB — check available disk space
+check_disk_space() {
+    local path="${1:-.}" min_mb="${2:-500}"
+    local avail_kb
+    avail_kb=$(df -k "$path" 2>/dev/null | awk 'NR==2 {print $4}')
+    if [[ -z "$avail_kb" ]]; then
+        print_warning "Could not check disk space on $path"
+        return 0
+    fi
+    local avail_mb=$(( avail_kb / 1024 ))
+    if [[ "$avail_mb" -lt "$min_mb" ]]; then
+        print_error "Insufficient disk space: ${avail_mb} MB available, ${min_mb} MB required on $path"
+        return 1
+    fi
+    [[ "$VERBOSE" == "true" ]] && print_info "Disk space: ${avail_mb} MB available on $path"
+    return 0
+}
+
+# check_odoo_running [TIMEOUT] — wait for Odoo HTTP to respond
+check_odoo_running() {
+    local timeout="${1:-$HEALTH_CHECK_TIMEOUT}"
+    local port="${ODOO_HTTP_PORT}"
+    local elapsed=0
+    print_info "Waiting for Odoo to respond on port ${port}..."
+    while [[ "$elapsed" -lt "$timeout" ]]; do
+        if nc -z localhost "$port" 2>/dev/null; then
+            print_success "Odoo is running (port ${port} responded after $(format_duration $elapsed))"
+            return 0
+        fi
+        sleep 2
+        elapsed=$((elapsed + 2))
+    done
+    print_error "Odoo did not respond on port ${port} within $(format_duration $timeout)"
+    return 1
+}
+
+# require_command CMD — check that a command is available
+require_command() {
+    local cmd="$1"
+    if ! command -v "$cmd" &>/dev/null; then
+        print_error "Required command not found: $cmd"
+        return 1
+    fi
+}
+
+################################################################################
+# DATABASE UTILITIES
+################################################################################
+# validate_pg_connection — check PostgreSQL connectivity
+validate_pg_connection() {
+    if ! sudo -u "$ODOO_USER" psql -d postgres -c "SELECT 1;" &>/dev/null; then
+        print_error "Cannot connect to PostgreSQL as $ODOO_USER"
+        return 1
+    fi
+    [[ "$VERBOSE" == "true" ]] && print_info "PostgreSQL connection OK"
+    return 0
+}
+
+# terminate_db_connections DB_NAME — kill all active connections to a database
+terminate_db_connections() {
+    local db_name="$1"
+    if [[ -z "$db_name" ]]; then
+        print_error "terminate_db_connections: database name required"
+        return 1
+    fi
+    if [[ "$DRY_RUN" == "true" ]]; then
+        print_dry_run "Terminate connections to database: $db_name"
+        return 0
+    fi
+    print_info "Terminating connections to: $db_name"
+    sudo -u "$ODOO_USER" psql -d postgres -c \
+        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${db_name}' AND pid <> pg_backend_pid();" \
+        &>/dev/null
+}
+
+# db_exists DB_NAME — check if database exists
+db_exists() {
+    local db_name="$1"
+    sudo -u "$ODOO_USER" psql -d postgres -tAc \
+        "SELECT 1 FROM pg_database WHERE datname = '${db_name}';" 2>/dev/null | grep -q 1
+}
+
+# validate_backup_file FILE — check that a backup zip file is valid
+validate_backup_file() {
+    local file="$1"
+    if [[ ! -f "$file" ]]; then
+        print_error "Backup file not found: $file"
+        return 1
+    fi
+    local size
+    size=$(stat -c%s "$file" 2>/dev/null || echo 0)
+    if [[ "$size" -eq 0 ]]; then
+        print_error "Backup file is empty: $file"
+        return 1
+    fi
+    if ! unzip -t "$file" &>/dev/null; then
+        print_error "Backup file is corrupted: $file"
+        return 1
+    fi
+    print_info "Backup file valid: $file ($(format_size "$size"))"
+    return 0
+}
+
+################################################################################
+# NEUTRALIZATION
+################################################################################
+# neutralize_database DB_NAME — full neutralization for restored databases
+neutralize_database() {
+    local db_name="$1"
+    if [[ -z "$db_name" ]]; then
+        print_error "neutralize_database: database name required"
+        return 1
+    fi
+    if [[ "$DRY_RUN" == "true" ]]; then
+        print_dry_run "Neutralize database: $db_name"
+        return 0
+    fi
+
+    print_step "Neutralizing database: $db_name"
+
+    sudo -u "$ODOO_USER" psql -d "$db_name" -v ON_ERROR_STOP=0 <<'NEUTRALIZE_SQL'
+-- Mail servers: disable all outgoing
+UPDATE ir_mail_server SET active = false;
+
+-- Create a dummy mail server to prevent fallback
+INSERT INTO ir_mail_server (name, smtp_host, smtp_port, smtp_encryption, active, sequence)
+SELECT 'NEUTRALIZED - DO NOT USE', 'localhost', 1025, 'none', false, 999
+WHERE NOT EXISTS (SELECT 1 FROM ir_mail_server WHERE name = 'NEUTRALIZED - DO NOT USE');
+
+-- Fetchmail: disable all incoming
+UPDATE fetchmail_server SET active = false;
+
+-- Crons: disable all except autovacuum
+UPDATE ir_cron SET active = false
+WHERE id NOT IN (
+    SELECT res_id FROM ir_model_data
+    WHERE module = 'base' AND name = 'autovacuum_job'
+);
+
+-- Webhooks: disable
+UPDATE base_automation SET active = false
+WHERE trigger IN ('on_webhook', 'on_time', 'on_time_created', 'on_time_updated');
+
+-- CDN: disable
+UPDATE ir_config_parameter SET value = ''
+WHERE key IN ('web.base.url.cdn', 'web.base.url.cdn.filters');
+
+-- Domain: clear
+UPDATE ir_config_parameter SET value = ''
+WHERE key = 'mail.catchall.domain';
+
+-- Robots.txt: disallow all
+INSERT INTO ir_config_parameter (key, value)
+VALUES ('website.robots.txt', E'User-agent: *\nDisallow: /')
+ON CONFLICT (key) DO UPDATE SET value = E'User-agent: *\nDisallow: /';
+
+-- IAP: disable
+UPDATE iap_account SET account_token = 'disabled' WHERE account_token IS NOT NULL AND account_token != 'disabled';
+
+-- Ribbon / dev mode indicator
+INSERT INTO ir_config_parameter (key, value)
+VALUES ('ribbon.name', 'TEST')
+ON CONFLICT (key) DO UPDATE SET value = 'TEST';
+NEUTRALIZE_SQL
+
+    # web.base.url — set to local (outside heredoc to use variable)
+    sudo -u "$ODOO_USER" psql -d "$db_name" -c \
+        "UPDATE ir_config_parameter SET value = '${DEST_URL}' WHERE key = 'web.base.url';"
+
+    print_success "Database neutralized: $db_name"
+}
+
+################################################################################
+# DATABASE CLONE
+################################################################################
+# odoo_clone_db [-h] [SOURCE_DB] [DEST_DB] [--no-neutralize]
+odoo_clone_db() {
+    if [[ "${1:-}" == "-h" ]]; then
+        echo "Clone an Odoo database using pg_dump/pg_restore + filestore copy"
+        echo "Usage: odoo_clone_db [source_db] [dest_db] [--no-neutralize]"
+        echo "Defaults: source=$DEFAULT_DB, dest=${DEFAULT_DB}_clone"
+        return
+    fi
+
+    local source_db="${1:-$DEFAULT_DB}"
+    local dest_db="${2:-${DEFAULT_DB}_clone}"
+    local no_neutralize=false
+    # Check for --no-neutralize in any position
+    for arg in "$@"; do
+        [[ "$arg" == "--no-neutralize" ]] && no_neutralize=true
+    done
+
+    local start_time=$SECONDS
+
+    print_step "Clone database: $source_db -> $dest_db"
+
+    # Pre-checks
+    if ! db_exists "$source_db"; then
+        print_error "Source database does not exist: $source_db"
+        return 1
+    fi
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        print_dry_run "pg_dump $source_db"
+        print_dry_run "createdb $dest_db"
+        print_dry_run "pg_restore into $dest_db"
+        print_dry_run "Copy filestore: $source_db -> $dest_db"
+        [[ "$no_neutralize" == "false" ]] && print_dry_run "Neutralize: $dest_db"
+        return 0
+    fi
+
+    confirm_action "Clone '$source_db' to '$dest_db'? Existing '$dest_db' will be DROPPED!" || return 0
+
+    # Terminate and drop dest
+    terminate_db_connections "$dest_db"
+    sudo -u "$ODOO_USER" dropdb --if-exists "$dest_db"
+    sudo -u "$ODOO_USER" rm -rf "${ODOO_FILESTORE_PATH}/${dest_db}"
+
+    # Dump source
+    print_info "Dumping source database: $source_db"
+    local tmp_dump
+    tmp_dump=$(mktemp)
+    sudo -u "$ODOO_USER" pg_dump --no-owner --format=c "$source_db" > "$tmp_dump"
+
+    # Create and restore
+    print_info "Creating target database: $dest_db"
+    sudo -u "$ODOO_USER" createdb --encoding=UTF8 --locale=en_US.UTF-8 --template=template0 "$dest_db"
+    sudo -u "$ODOO_USER" pg_restore --no-owner --dbname="$dest_db" "$tmp_dump" 2>/dev/null || true
+    rm -f "$tmp_dump"
+    print_success "Database restored"
+
+    # Copy filestore
+    local source_fs="${ODOO_FILESTORE_PATH}/${source_db}"
+    local dest_fs="${ODOO_FILESTORE_PATH}/${dest_db}"
+    if [[ -d "$source_fs" ]]; then
+        print_info "Copying filestore..."
+        sudo -u "$ODOO_USER" cp -a "$source_fs" "$dest_fs"
+        print_success "Filestore copied"
+    else
+        print_warning "No source filestore found at $source_fs"
+    fi
+
+    # Neutralize
+    if [[ "$no_neutralize" == "false" ]]; then
+        neutralize_database "$dest_db"
+    else
+        print_warning "Neutralization skipped (--no-neutralize)"
+    fi
+
+    local elapsed=$(( SECONDS - start_time ))
+    print_success "Clone complete in $(format_duration $elapsed): $source_db -> $dest_db"
+}
+
+################################################################################
+# MODULE UPDATE (for update_*_modules.sh thin wrappers)
+################################################################################
+# update_custom_module -m MODULE -r REPO_PATH [-d DB] [--force]
+update_custom_module() {
+    local module="" repo_path="" database="$DEFAULT_DB" force=false
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -m|--module)    module="$2"; shift ;;
+            -r|--repo)      repo_path="$2"; shift ;;
+            -d|--database)  database="$2"; force=true; shift ;;
+            --force)        force=true ;;
+            -h|--help)
+                echo "Usage: update_custom_module -m MODULE -r REPO_PATH [-d DB] [--force]"
+                return 0
+                ;;
+            *) print_error "Unknown option: $1"; return 1 ;;
+        esac
+        shift
+    done
+
+    if [[ -z "$module" || -z "$repo_path" ]]; then
+        print_error "update_custom_module: -m MODULE and -r REPO_PATH are required"
+        return 1
+    fi
+
+    local start_time=$SECONDS
+
+    # Fetch and compare
+    print_step "Checking for updates: $module"
+    if [[ "$DRY_RUN" == "true" ]]; then
+        print_dry_run "git fetch in $repo_path"
+        print_dry_run "Stop service $ODOO_SERVICE_NAME"
+        print_dry_run "git pull in $repo_path"
+        print_dry_run "odoo-bin -u $module -d $database"
+        print_dry_run "Clear sessions"
+        print_dry_run "Start service $ODOO_SERVICE_NAME"
+        return 0
+    fi
+
+    sudo -u "$ODOO_USER" bash -c "cd '$repo_path' && git fetch"
+    local local_rev remote_rev
+    local_rev=$(sudo -u "$ODOO_USER" bash -c "cd '$repo_path' && git rev-parse @")
+    remote_rev=$(sudo -u "$ODOO_USER" bash -c "cd '$repo_path' && git rev-parse @{u}")
+
+    if [[ "$force" == "false" && "$local_rev" == "$remote_rev" ]]; then
+        print_info "No updates for $module. Skipping."
+        return 0
+    fi
+
+    # Stop service
+    print_step "Stopping Odoo service"
+    sudo systemctl stop "$ODOO_SERVICE_NAME"
+
+    # Pull changes
+    print_step "Pulling latest changes for $module"
+    sudo -u "$ODOO_USER" bash -c "cd '$repo_path' && git pull"
+
+    # Update module
+    print_step "Updating $module in DB $database"
+    run_odoo "$ODOO_BIN_PATH -c $ODOO_CONF_PATH -d '$database' -u '$module' --stop-after-init"
+
+    # Clear sessions
+    print_info "Clearing sessions"
+    sudo -u "$ODOO_USER" bash -c "rm -f ${ODOO_SESSIONS_PATH}/*.sess"
+
+    # Start service
+    print_step "Starting Odoo service"
+    sudo systemctl start "$ODOO_SERVICE_NAME"
+
+    # Health check
+    check_odoo_running || print_warning "Odoo may not have started correctly"
+
+    local elapsed=$(( SECONDS - start_time ))
+    print_success "Module $module updated in $(format_duration $elapsed)"
+    print_info "Use odoo_logs to monitor the service"
+}
 
 ################################################################################
 # Utility: run_odoo
+# NOTE: Commands are passed as a single string to bash -c
 ################################################################################
 run_odoo() {
+    if [[ "$DRY_RUN" == "true" ]]; then
+        print_dry_run "run_odoo: sudo -u $ODOO_USER bash -c \"source $ODOO_VENV && $*\""
+        return 0
+    fi
     sudo -u "$ODOO_USER" bash -c "source $ODOO_VENV && $*"
 }
 
@@ -27,38 +479,110 @@ run_odoo() {
 # odoo_restart [-h]
 ################################################################################
 odoo_restart() {
-    if [[ "$1" == "-h" ]]; then
+    if [[ "${1:-}" == "-h" ]]; then
         echo "Restart Odoo systemd service"
         echo "Usage: odoo_restart"
         return
     fi
-    echo "Restarting Odoo service: $ODOO_SERVICE_NAME"
+    if [[ "$DRY_RUN" == "true" ]]; then
+        print_dry_run "Restart service $ODOO_SERVICE_NAME"
+        return 0
+    fi
+    print_step "Restarting Odoo service: $ODOO_SERVICE_NAME"
     sudo systemctl restart "$ODOO_SERVICE_NAME"
+    check_odoo_running || print_warning "Odoo may not have started correctly"
 }
 
 ################################################################################
-# odoo_logs [-h]
+# odoo_start [-h]
 ################################################################################
-odoo_logs() {
-    if [[ "$1" == "-h" ]]; then
-        echo "Tail Odoo log file"
-        echo "Usage: odoo_logs"
+odoo_start() {
+    if [[ "${1:-}" == "-h" ]]; then
+        echo "Start Odoo systemd service"
+        echo "Usage: odoo_start"
         return
     fi
-    echo "Tailing log file: $ODOO_LOG_PATH"
-    sudo tail -f "$ODOO_LOG_PATH"
+    if [[ "$DRY_RUN" == "true" ]]; then
+        print_dry_run "Start service $ODOO_SERVICE_NAME"
+        return 0
+    fi
+    print_step "Starting Odoo service: $ODOO_SERVICE_NAME"
+    sudo systemctl start "$ODOO_SERVICE_NAME"
+    check_odoo_running || print_warning "Odoo may not have started correctly"
+}
+
+################################################################################
+# odoo_stop [-h]
+################################################################################
+odoo_stop() {
+    if [[ "${1:-}" == "-h" ]]; then
+        echo "Stop Odoo systemd service"
+        echo "Usage: odoo_stop"
+        return
+    fi
+    if [[ "$DRY_RUN" == "true" ]]; then
+        print_dry_run "Stop service $ODOO_SERVICE_NAME"
+        return 0
+    fi
+    print_step "Stopping Odoo service: $ODOO_SERVICE_NAME"
+    sudo systemctl stop "$ODOO_SERVICE_NAME"
+    print_success "Service stopped"
+}
+
+################################################################################
+# odoo_logs [-h] [-n LINES]
+################################################################################
+odoo_logs() {
+    if [[ "${1:-}" == "-h" ]]; then
+        echo "Tail Odoo log file"
+        echo "Usage: odoo_logs [-n LINES]"
+        return
+    fi
+    local lines=50
+    if [[ "${1:-}" == "-n" && -n "${2:-}" ]]; then
+        lines="$2"
+    fi
+    print_info "Tailing log file: $ODOO_LOG_PATH (last $lines lines)"
+    sudo tail -f -n "$lines" "$ODOO_LOG_PATH"
+}
+
+################################################################################
+# odoo_errors [-h] [-n COUNT] — show last N errors and warnings from log
+################################################################################
+odoo_errors() {
+    if [[ "${1:-}" == "-h" ]]; then
+        echo "Show last N errors and warnings from Odoo log"
+        echo "Usage: odoo_errors [-n COUNT]"
+        echo "Default: last 20 errors/warnings"
+        return
+    fi
+    local count=20
+    if [[ "${1:-}" == "-n" && -n "${2:-}" ]]; then
+        count="$2"
+    fi
+    print_info "Last $count errors/warnings from $ODOO_LOG_PATH:"
+    echo ""
+    sudo grep -E '\b(ERROR|WARNING|CRITICAL)\b' "$ODOO_LOG_PATH" | tail -n "$count" | while IFS= read -r line; do
+        if echo "$line" | grep -qE '\bCRITICAL\b'; then
+            echo -e "${_RED}${_BOLD}${line}${_NC}"
+        elif echo "$line" | grep -qE '\bERROR\b'; then
+            echo -e "${_RED}${line}${_NC}"
+        else
+            echo -e "${_YELLOW}${line}${_NC}"
+        fi
+    done
 }
 
 ################################################################################
 # odoo_shell [-h]
 ################################################################################
 odoo_shell() {
-    if [[ "$1" == "-h" ]]; then
+    if [[ "${1:-}" == "-h" ]]; then
         echo "Open Odoo shell"
         echo "Usage: odoo_shell"
         return
     fi
-    echo "Opening Odoo shell..."
+    print_info "Opening Odoo shell..."
     run_odoo "$ODOO_BIN_PATH shell -c $ODOO_CONF_PATH"
 }
 
@@ -66,26 +590,49 @@ odoo_shell() {
 # odoo_backup_http [-h] [<db_name>]
 ################################################################################
 odoo_backup_http() {
-    if [[ "$1" == "-h" ]]; then
+    if [[ "${1:-}" == "-h" ]]; then
         echo "Create a backup via Odoo's web controller"
         echo "Usage: odoo_backup_http [<db_name>]"
         echo "Defaults to DB: $DEFAULT_DB"
         return
     fi
     local db="${1:-$DEFAULT_DB}"
-    local timestamp=$(date +'%Y%m%d_%H%M%S')
+    local timestamp
+    timestamp=$(date +'%Y%m%d_%H%M%S')
     local backup_file="${BACKUP_DIR}/backup_${db}_${timestamp}.zip"
-    echo "Creating backup for DB: $db -> $backup_file"
+    local start_time=$SECONDS
+
+    check_disk_space "$BACKUP_DIR" 500 || return 1
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        print_dry_run "Create backup for DB: $db -> $backup_file"
+        print_dry_run "POST to ${SOURCE_URL}/web/database/backup"
+        return 0
+    fi
+
+    print_step "Creating backup for DB: $db"
     mkdir -p "$BACKUP_DIR"
-    curl --silent -X POST -F "master_pwd=$MASTER_PWD" -F "name=$db" -F "backup_format=zip" -o "$backup_file" "$SOURCE_URL/web/database/backup"
-    echo "Backup completed: $backup_file"
+    curl --silent -X POST \
+        -F "master_pwd=$MASTER_PWD" \
+        -F "name=$db" \
+        -F "backup_format=zip" \
+        -o "$backup_file" \
+        "${SOURCE_URL}/web/database/backup"
+
+    if validate_backup_file "$backup_file"; then
+        local elapsed=$(( SECONDS - start_time ))
+        print_success "Backup completed in $(format_duration $elapsed): $backup_file"
+    else
+        print_error "Backup validation failed"
+        return 1
+    fi
 }
 
 ################################################################################
 # odoo_restore_http [-h] [<source_db>] [<dest_db>] [<backup_file>]
 ################################################################################
 odoo_restore_http() {
-    if [[ "$1" == "-h" ]]; then
+    if [[ "${1:-}" == "-h" ]]; then
         echo "Restore a DB from backup via Odoo's web controller"
         echo "Usage: odoo_restore_http [<source_db>] [<dest_db>] [<backup_file>]"
         echo "Defaults: source=$DEFAULT_DB, dest=${DEFAULT_DB}_restored"
@@ -93,172 +640,168 @@ odoo_restore_http() {
     fi
     local source_db="${1:-$DEFAULT_DB}"
     local dest_db="${2:-${DEFAULT_DB}_restored}"
-    local backup_file="$3"
+    local backup_file="${3:-}"
+    local start_time=$SECONDS
 
-    if [ -z "$backup_file" ]; then
-        echo "Using latest backup from $BACKUP_DIR for DB: $source_db"
-        backup_file=$(ls -t ${BACKUP_DIR}/backup_${source_db}_*.zip 2>/dev/null | head -1)
-        if [ -z "$backup_file" ]; then
-            echo "No backup file found for $source_db"
+    # Find backup file if not provided
+    if [[ -z "$backup_file" ]]; then
+        print_info "Using latest backup from $BACKUP_DIR for DB: $source_db"
+        backup_file=$(ls -t "${BACKUP_DIR}"/backup_"${source_db}"_*.zip 2>/dev/null | head -1)
+        if [[ -z "$backup_file" ]]; then
+            print_error "No backup file found for $source_db"
             return 1
         fi
     fi
 
-    echo "Terminating sessions and dropping DB: $dest_db"
-    sudo -u "$ODOO_USER" psql -d postgres -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${dest_db}' AND pid <> pg_backend_pid();"
+    # Validations
+    validate_pg_connection || return 1
+    validate_backup_file "$backup_file" || return 1
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        print_dry_run "Restore $backup_file to $dest_db"
+        print_dry_run "Terminate connections and drop $dest_db"
+        print_dry_run "POST to ${DEST_URL}/web/database/restore"
+        print_dry_run "Neutralize database $dest_db"
+        return 0
+    fi
+
+    confirm_action "Restore $backup_file to database $dest_db? This will DROP the existing DB!" || return 0
+
+    # Terminate connections and drop
+    print_step "Preparing target database: $dest_db"
+    terminate_db_connections "$dest_db"
     sudo -u "$ODOO_USER" dropdb --if-exists "$dest_db"
-    sudo -u "$ODOO_USER" rm -rf "/opt/odoo19/.local/share/Odoo/filestore/$dest_db"
+    sudo -u "$ODOO_USER" rm -rf "${ODOO_FILESTORE_PATH}/$dest_db"
 
-    echo "Restoring $backup_file to $dest_db"
-    curl --silent -X POST -F "master_pwd=$MASTER_PWD" -F "backup_file=@${backup_file}" -F "name=$dest_db" -F "copy=true" -F "neutralize_database=on" "$DEST_URL/web/database/restore"
+    # Restore
+    print_step "Restoring $backup_file to $dest_db"
+    curl --silent -X POST \
+        -F "master_pwd=$MASTER_PWD" \
+        -F "backup_file=@${backup_file}" \
+        -F "name=$dest_db" \
+        -F "copy=true" \
+        -F "neutralize_database=on" \
+        "${DEST_URL}/web/database/restore"
 
-    echo "Disabling emails and cron jobs"
-    sudo -u "$ODOO_USER" psql -d "$dest_db" -c "UPDATE ir_mail_server SET active = false;"
-    sudo -u "$ODOO_USER" psql -d "$dest_db" -c "UPDATE fetchmail_server SET active = false;"
-    sudo -u "$ODOO_USER" psql -d "$dest_db" -c "UPDATE ir_cron SET active = false;"
-    sudo -u "$ODOO_USER" psql -d "$dest_db" -c "UPDATE ir_config_parameter SET value = '$DEST_URL' WHERE key = 'web.base.url';"
+    # Full neutralization
+    neutralize_database "$dest_db"
 
-    echo "Restore complete: $dest_db"
+    # Health check
+    check_odoo_running || print_warning "Odoo may not be running"
+
+    local elapsed=$(( SECONDS - start_time ))
+    print_success "Restore complete in $(format_duration $elapsed): $dest_db"
 }
-
-################################################################################
-# odoo_start [-h]
-################################################################################
-odoo_start() {
-    if [[ "$1" == "-h" ]]; then
-        echo "Start Odoo systemd service"
-        echo "Usage: odoo_start"
-        return
-    fi
-    echo "Starting Odoo service: $ODOO_SERVICE_NAME"
-    sudo systemctl start "$ODOO_SERVICE_NAME"
-}
-
-################################################################################
-# odoo_stop [-h]
-################################################################################
-odoo_stop() {
-    if [[ "$1" == "-h" ]]; then
-        echo "Stop Odoo systemd service"
-        echo "Usage: odoo_stop"
-        return
-    fi
-    echo "Stopping Odoo service: $ODOO_SERVICE_NAME"
-    sudo systemctl stop "$ODOO_SERVICE_NAME"
-}
-
 
 ################################################################################
 # odoo_module_install [-h] <module_name>
 ################################################################################
 odoo_module_install() {
-    if [[ "$1" == "-h" || -z "$1" ]]; then
+    if [[ "${1:-}" == "-h" || -z "${1:-}" ]]; then
         echo "Install an Odoo module"
         echo "Usage: odoo_module_install <module_name>"
         return
     fi
     local module="$1"
-    echo "Installing module: $module"
+    local start_time=$SECONDS
+    if [[ "$DRY_RUN" == "true" ]]; then
+        print_dry_run "Install module: $module"
+        return 0
+    fi
+    print_step "Installing module: $module"
     run_odoo "$ODOO_BIN_PATH -c $ODOO_CONF_PATH -i $module --stop-after-init"
+    local elapsed=$(( SECONDS - start_time ))
+    print_success "Module $module installed in $(format_duration $elapsed)"
 }
 
 ################################################################################
 # odoo_module_update [-h] <module_name>
 ################################################################################
 odoo_module_update() {
-    if [[ "$1" == "-h" || -z "$1" ]]; then
+    if [[ "${1:-}" == "-h" || -z "${1:-}" ]]; then
         echo "Update an Odoo module"
         echo "Usage: odoo_module_update <module_name>"
         return
     fi
     local module="$1"
-    echo "Updating module: $module"
+    local start_time=$SECONDS
+    if [[ "$DRY_RUN" == "true" ]]; then
+        print_dry_run "Update module: $module"
+        return 0
+    fi
+    print_step "Updating module: $module"
     run_odoo "$ODOO_BIN_PATH -c $ODOO_CONF_PATH -u $module --stop-after-init"
+    local elapsed=$(( SECONDS - start_time ))
+    print_success "Module $module updated in $(format_duration $elapsed)"
 }
 
 ################################################################################
 # odoo_module_uninstall [-h] <module_name>
 ################################################################################
 odoo_module_uninstall() {
-    if [[ "$1" == "-h" || -z "$1" ]]; then
+    if [[ "${1:-}" == "-h" || -z "${1:-}" ]]; then
         echo "Uninstall an Odoo module using the Odoo shell API"
         echo "Usage: odoo_module_uninstall <module_name>"
         return
     fi
     local module="$1"
-    echo "Uninstalling module via Odoo shell: $module"
-    run_odoo "$ODOO_BIN_PATH shell -c $ODOO_CONF_PATH -d $DEFAULT_DB -q -c \"
+    if [[ "$DRY_RUN" == "true" ]]; then
+        print_dry_run "Uninstall module: $module"
+        return 0
+    fi
+    confirm_action "Uninstall module $module from $DEFAULT_DB?" || return 0
+    print_step "Uninstalling module via Odoo shell: $module"
+    run_odoo "$ODOO_BIN_PATH shell -c $ODOO_CONF_PATH -d $DEFAULT_DB -q" <<UNINSTALL_EOF
 env['ir.module.module'].search([('name', '=', '$module')]).button_immediate_uninstall()
-\""
+UNINSTALL_EOF
+    print_success "Module $module uninstalled"
 }
 
 ################################################################################
 # odoo_update_polimex_modules [-h] [-d <database>] [-m <module>]
+# Legacy wrapper — uses update_custom_module internally
 ################################################################################
 odoo_update_polimex_modules() {
-    local DEFAULT_DATABASE="${DEFAULT_DB}"
-    local DEFAULT_MODULE="hr_rfid"
-    local MODULE_PATH="/opt/${ODOO_USER}/custom-addons/polimex-rfid"
-    local ODOO_DATABASE="$DEFAULT_DATABASE"
-    local ODOO_MODULE="$DEFAULT_MODULE"
-    local FORCE_UPDATE=false
+    local database="$DEFAULT_DB"
+    local module="hr_rfid"
+    local repo_path="${ODOO_CUSTOM_ADDONS}/polimex-rfid"
+    local extra_args=()
 
     while [[ "$#" -gt 0 ]]; do
         case $1 in
             -h|--help)
                 echo "Usage: odoo_update_polimex_modules [options]"
                 echo "Options:"
-                echo "  -d, --database <name>   Specify the database to update (default: $DEFAULT_DATABASE)"
-                echo "  -m, --module <name>     Specify the module to update (default: $DEFAULT_MODULE)"
+                echo "  -d, --database <name>   Database to update (default: $DEFAULT_DB)"
+                echo "  -m, --module <name>     Module to update (default: hr_rfid)"
                 return 0
                 ;;
             -d|--database)
-                if [ -n "$2" ]; then
-                    ODOO_DATABASE="$2"
-                    FORCE_UPDATE=true
+                if [[ -n "${2:-}" ]]; then
+                    database="$2"
+                    extra_args+=(--force)
                     shift
                 else
-                    echo "Error: Missing argument for $1"
+                    print_error "Missing argument for $1"
                     return 1
                 fi
                 ;;
             -m|--module)
-                if [ -n "$2" ]; then
-                    ODOO_MODULE="$2"
+                if [[ -n "${2:-}" ]]; then
+                    module="$2"
                     shift
                 else
-                    echo "Error: Missing argument for $1"
+                    print_error "Missing argument for $1"
                     return 1
                 fi
                 ;;
             *)
-                echo "Unknown option: $1"
+                print_error "Unknown option: $1"
                 return 1
                 ;;
         esac
         shift
     done
 
-    echo "Downloading Polimex modules..."
-    sudo -u "${ODOO_USER}" bash -c "cd '${MODULE_PATH}' && git fetch"
-    LOCAL=$(sudo -u "${ODOO_USER}" bash -c "cd '${MODULE_PATH}' && git rev-parse @")
-    REMOTE=$(sudo -u "${ODOO_USER}" bash -c "cd '${MODULE_PATH}' && git rev-parse @{u}")
-
-    if [ "$FORCE_UPDATE" = false ] && [ "$LOCAL" = "$REMOTE" ]; then
-        echo "No updates for ${ODOO_MODULE}. Skipping."
-    else
-        echo "Stopping Odoo service..."
-        sudo systemctl stop "${ODOO_SERVICE_NAME}"
-        echo "Pulling latest changes for ${ODOO_MODULE}..."
-        sudo -u "${ODOO_USER}" bash -c "cd '${MODULE_PATH}' && git pull"
-        echo "Updating ${ODOO_MODULE} in DB ${ODOO_DATABASE}..."
-        run_odoo "$ODOO_BIN_PATH -d '${ODOO_DATABASE}' -u '${ODOO_MODULE}' --stop-after-init"
-        echo "Clearing sessions..."
-        sudo -u "${ODOO_USER}" bash -c "rm -f /opt/${ODOO_USER}/.local/share/Odoo/sessions/*.sess"
-        echo "Starting Odoo service..."
-        sudo systemctl start "${ODOO_SERVICE_NAME}"
-    fi
-
-    tail -f "${ODOO_LOG_PATH}"
+    update_custom_module -m "$module" -r "$repo_path" -d "$database" "${extra_args[@]+"${extra_args[@]}"}"
 }
-

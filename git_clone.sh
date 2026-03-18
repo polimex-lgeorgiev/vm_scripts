@@ -1,26 +1,35 @@
 #!/bin/bash
+# Copyright (C) 2023-2026 Polimex Holding Ltd. All rights reserved.
+# Website: https://polimex.co
+#
+# PROPRIETARY AND CONFIDENTIAL
+# Unauthorized copying, modification, distribution, or use is strictly prohibited.
+#
+# Author: Polimex Dev Team
+# Description: Clone Git repositories with branch selection (interactive or direct)
+set -euo pipefail
 
 # Function to display help
-function display_help() {
+display_help() {
     echo "Usage: $0 [repository_url] [branch_name]"
-    echo
-    echo "repository_url: URL of the Git repository to clone."
-    echo "branch_name: Name of the branch to clone."
-    echo
+    echo ""
+    echo "Without arguments: interactive menu for branch and repo selection."
+    echo "With arguments:    clone a single repository."
+    echo ""
     echo "Example:"
-    echo "$0 https://github.com/OCA/hr-holidays.git 15.0"
+    echo "  $0 https://github.com/OCA/hr-holidays.git 19.0"
 }
 
-# If help is requested or two parameters are provided, script behaves as before
-if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+# Direct clone mode
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
     display_help
     exit 0
 elif [[ $# -eq 2 ]]; then
-    git clone $1 --depth 1 --branch $2 --single-branch --no-tags
+    git clone "$1" --depth 1 --branch "$2" --single-branch --no-tags
     exit 0
 fi
 
-# Predefined arrays for branches and repositories
+# Predefined arrays
 declare -a branches=("14.0" "15.0" "16.0" "17.0" "18.0" "19.0")
 declare -a repos=(
     "https://github.com/polimex/polimex-rfid.git"
@@ -38,44 +47,81 @@ declare -a repos=(
     "https://github.com/OCA/calendar.git"
 )
 
-# Menu for selecting a branch
-echo "Please select a branch:"
+# Extract short names for display
+repo_names=()
+for url in "${repos[@]}"; do
+    name=$(basename "$url" .git)
+    repo_names+=("$name")
+done
+
+# Branch selection
+echo ""
+echo "Select a branch:"
 select branch in "${branches[@]}"; do
-    if [[ -n $branch ]]; then
-        echo "You selected branch $branch"
+    if [[ -n "$branch" ]]; then
+        echo ""
+        echo "Branch: $branch"
         break
-    else
-        echo "Invalid selection. Please try again."
     fi
+    echo "Invalid selection."
 done
 
-# Menu for selecting one or more repositories
-echo "Please select one or more repositories (enter the numbers separated by space):"
-select repo in "${repos[@]}"; do
-    if [[ -n $repo ]]; then
-        selected_repos=("$repo")
-        while true; do
-            echo "You selected repositories: ${selected_repos[*]}."
-            echo "Select another repository or type 'c' to continue with these selections."
-            select repo in "${repos[@]}"; do
-                if [[ -n $repo ]]; then
-                    selected_repos+=("$repo")
-                    break
-                elif [[ $REPLY == "c" ]]; then
-                    break 2
-                else
-                    echo "Invalid selection. Please try again."
-                fi
-            done
-        done
-        break
-    else
-        echo "Invalid selection. Please try again."
-    fi
+# Repo selection — show numbered list, accept space-separated numbers or 'a' for all
+echo ""
+echo "Available repositories:"
+for i in "${!repo_names[@]}"; do
+    printf "  %2d) %s\n" $((i + 1)) "${repo_names[$i]}"
 done
+echo ""
+echo "Enter numbers separated by spaces, or 'a' for all:"
+echo -n "#? "
+read -r selection
 
-# Cloning selected repositories with selected branch
+selected_repos=()
+if [[ "$selection" == "a" || "$selection" == "A" ]]; then
+    selected_repos=("${repos[@]}")
+else
+    for num in $selection; do
+        if [[ "$num" =~ ^[0-9]+$ ]] && (( num >= 1 && num <= ${#repos[@]} )); then
+            selected_repos+=("${repos[$((num - 1))]}")
+        else
+            echo "Skipping invalid number: $num"
+        fi
+    done
+fi
+
+if [[ ${#selected_repos[@]} -eq 0 ]]; then
+    echo "No repositories selected."
+    exit 1
+fi
+
+# Confirm
+echo ""
+echo "Will clone ${#selected_repos[@]} repo(s) on branch $branch:"
+for url in "${selected_repos[@]}"; do
+    echo "  - $(basename "$url" .git)"
+done
+echo ""
+echo -n "Continue? [Y/n] "
+read -r confirm
+if [[ "$confirm" =~ ^[Nn]$ ]]; then
+    echo "Cancelled."
+    exit 0
+fi
+
+# Clone
+echo ""
+ok=0 fail=0
 for repo in "${selected_repos[@]}"; do
-    echo "Cloning repository $repo with branch $branch"
-    git clone $repo --depth 1 --branch $branch --single-branch --no-tags
+    name=$(basename "$repo" .git)
+    echo "Cloning $name ($branch)..."
+    if git clone "$repo" --depth 1 --branch "$branch" --single-branch --no-tags 2>&1; then
+        ok=$((ok + 1))
+    else
+        echo "FAILED: $name"
+        fail=$((fail + 1))
+    fi
+    echo ""
 done
+
+echo "Done: $ok cloned, $fail failed."

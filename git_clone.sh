@@ -8,29 +8,31 @@
 # Author: Polimex Dev Team
 # Description: Clone Git repositories with branch selection (interactive or direct)
 set -euo pipefail
-
-# Function to display help
-display_help() {
-    echo "Usage: $0 [repository_url] [branch_name]"
-    echo ""
-    echo "Without arguments: interactive menu for branch and repo selection."
-    echo "With arguments:    clone a single repository."
-    echo ""
-    echo "Example:"
-    echo "  $0 https://github.com/OCA/hr-holidays.git 19.0"
-}
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/bash_odoo_utils"
+parse_common_args "$@"
+set -- "${REMAINING_ARGS[@]+"${REMAINING_ARGS[@]}"}"
 
 # Direct clone mode
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-    display_help
+    echo "Usage: $0 [--dry-run] [repository_url branch_name]"
+    echo ""
+    echo "Without arguments: interactive menu (default branch: $ODOO_VERSION)"
+    echo "With arguments:    clone a single repository"
+    echo ""
+    echo "Example:"
+    echo "  $0 https://github.com/OCA/hr-holidays.git 19.0"
     exit 0
 elif [[ $# -eq 2 ]]; then
+    if [[ "$DRY_RUN" == "true" ]]; then
+        print_dry_run "git clone $1 --branch $2"
+        exit 0
+    fi
     git clone "$1" --depth 1 --branch "$2" --single-branch --no-tags
     exit 0
 fi
 
-# Predefined arrays
-declare -a branches=("14.0" "15.0" "16.0" "17.0" "18.0" "19.0")
+# Predefined repos
 declare -a repos=(
     "https://github.com/polimex/polimex-rfid.git"
     "https://github.com/OCA/OCB.git"
@@ -50,23 +52,16 @@ declare -a repos=(
 # Extract short names for display
 repo_names=()
 for url in "${repos[@]}"; do
-    name=$(basename "$url" .git)
-    repo_names+=("$name")
+    repo_names+=("$(basename "$url" .git)")
 done
 
-# Branch selection
+# Branch — use ODOO_VERSION as default, allow override
 echo ""
-echo "Select a branch:"
-select branch in "${branches[@]}"; do
-    if [[ -n "$branch" ]]; then
-        echo ""
-        echo "Branch: $branch"
-        break
-    fi
-    echo "Invalid selection."
-done
+echo -n "Branch [$ODOO_VERSION]: "
+read -r branch_input
+branch="${branch_input:-$ODOO_VERSION}"
 
-# Repo selection — show numbered list, accept space-separated numbers or 'a' for all
+# Repo selection
 echo ""
 echo "Available repositories:"
 for i in "${!repo_names[@]}"; do
@@ -91,17 +86,25 @@ else
 fi
 
 if [[ ${#selected_repos[@]} -eq 0 ]]; then
-    echo "No repositories selected."
+    print_error "No repositories selected."
     exit 1
 fi
 
 # Confirm
 echo ""
-echo "Will clone ${#selected_repos[@]} repo(s) on branch $branch:"
+print_step "Will clone ${#selected_repos[@]} repo(s) on branch $branch:"
 for url in "${selected_repos[@]}"; do
     echo "  - $(basename "$url" .git)"
 done
 echo ""
+
+if [[ "$DRY_RUN" == "true" ]]; then
+    for url in "${selected_repos[@]}"; do
+        print_dry_run "git clone $(basename "$url" .git) --branch $branch"
+    done
+    exit 0
+fi
+
 echo -n "Continue? [Y/n] "
 read -r confirm
 if [[ "$confirm" =~ ^[Nn]$ ]]; then
@@ -114,14 +117,15 @@ echo ""
 ok=0 fail=0
 for repo in "${selected_repos[@]}"; do
     name=$(basename "$repo" .git)
-    echo "Cloning $name ($branch)..."
+    print_info "Cloning $name ($branch)..."
     if git clone "$repo" --depth 1 --branch "$branch" --single-branch --no-tags 2>&1; then
+        print_success "$name"
         ok=$((ok + 1))
     else
-        echo "FAILED: $name"
+        print_error "Failed: $name"
         fail=$((fail + 1))
     fi
-    echo ""
 done
 
-echo "Done: $ok cloned, $fail failed."
+echo ""
+print_success "Done: $ok cloned, $fail failed."

@@ -14,12 +14,29 @@
 ################################################################################
 # GLOBAL CONFIGURATION
 ################################################################################
-ODOO_BIN_PATH=${ODOO_BIN_PATH:-/opt/odoo19/odoo/odoo-bin}
-ODOO_CONF_PATH=${ODOO_CONF_PATH:-/etc/odoo19.conf}
-ODOO_SERVICE_NAME=${ODOO_SERVICE_NAME:-odoo19}
-ODOO_LOG_PATH=${ODOO_LOG_PATH:-/var/log/odoo19.log}
-ODOO_USER=${ODOO_USER:-odoo19}
-ODOO_VENV=${ODOO_VENV:-/opt/odoo19/venv/bin/activate}
+# Auto-detect: find odoo user from /opt/odoo* directory
+_detect_odoo_user() {
+    local dir
+    for dir in /opt/odoo*/; do
+        [[ -d "$dir" ]] && basename "$dir" && return
+    done
+    echo "odoo19"
+}
+ODOO_USER=${ODOO_USER:-$(_detect_odoo_user)}
+
+# Auto-detect version from ODOO_USER (odoo19 → 19.0, odoo18 → 18.0)
+_detect_odoo_version() {
+    local num="${ODOO_USER//[!0-9]/}"
+    [[ -n "$num" ]] && echo "${num}.0" || echo "19.0"
+}
+ODOO_VERSION=${ODOO_VERSION:-$(_detect_odoo_version)}
+
+# All paths derived from ODOO_USER — no hardcoded version numbers
+ODOO_BIN_PATH=${ODOO_BIN_PATH:-/opt/${ODOO_USER}/odoo/odoo-bin}
+ODOO_CONF_PATH=${ODOO_CONF_PATH:-/etc/${ODOO_USER}.conf}
+ODOO_SERVICE_NAME=${ODOO_SERVICE_NAME:-${ODOO_USER}}
+ODOO_LOG_PATH=${ODOO_LOG_PATH:-/var/log/${ODOO_USER}.log}
+ODOO_VENV=${ODOO_VENV:-/opt/${ODOO_USER}/venv/bin/activate}
 ODOO_FILESTORE_PATH=${ODOO_FILESTORE_PATH:-/opt/${ODOO_USER}/.local/share/Odoo/filestore}
 ODOO_SESSIONS_PATH=${ODOO_SESSIONS_PATH:-/opt/${ODOO_USER}/.local/share/Odoo/sessions}
 ODOO_CUSTOM_ADDONS=${ODOO_CUSTOM_ADDONS:-/opt/${ODOO_USER}/custom-addons}
@@ -28,7 +45,7 @@ ODOO_HTTP_PORT=${ODOO_HTTP_PORT:-8069}
 BACKUP_DIR=${BACKUP_DIR:-/home/$USER/odoo_backups}
 BACKUP_RETENTION_DAYS=${BACKUP_RETENTION_DAYS:-7}
 MASTER_PWD=${MASTER_PWD:-dbadmin}
-DEFAULT_DB=${DEFAULT_DB:-19_polimexodoo}
+DEFAULT_DB=${DEFAULT_DB:-${ODOO_VERSION%%.*}_polimexodoo}
 SOURCE_URL=${SOURCE_URL:-http://localhost:${ODOO_HTTP_PORT}}
 DEST_URL=${DEST_URL:-http://localhost:${ODOO_HTTP_PORT}}
 HEALTH_CHECK_TIMEOUT=${HEALTH_CHECK_TIMEOUT:-60}

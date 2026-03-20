@@ -41,11 +41,41 @@ ODOO_FILESTORE_PATH=${ODOO_FILESTORE_PATH:-/opt/${ODOO_USER}/.local/share/Odoo/f
 ODOO_SESSIONS_PATH=${ODOO_SESSIONS_PATH:-/opt/${ODOO_USER}/.local/share/Odoo/sessions}
 ODOO_CUSTOM_ADDONS=${ODOO_CUSTOM_ADDONS:-/opt/${ODOO_USER}/custom-addons}
 ODOO_ADDONS_DIR=${ODOO_ADDONS_DIR:-/opt/${ODOO_USER}/addons}
-ODOO_HTTP_PORT=${ODOO_HTTP_PORT:-8069}
+# Auto-detect HTTP port from config file
+_detect_http_port() {
+    local conf="${ODOO_CONF_PATH}"
+    if [[ -r "$conf" ]]; then
+        local port
+        port=$(grep -E '^\s*http_port\s*=' "$conf" 2>/dev/null | sed 's/.*=\s*//' | tr -d '[:space:]')
+        [[ -n "$port" ]] && echo "$port" && return
+    fi
+    echo "8069"
+}
+ODOO_HTTP_PORT=${ODOO_HTTP_PORT:-$(_detect_http_port)}
 BACKUP_DIR=${BACKUP_DIR:-/home/$USER/odoo_backups}
 BACKUP_RETENTION_DAYS=${BACKUP_RETENTION_DAYS:-7}
-MASTER_PWD=${MASTER_PWD:-dbadmin}
-DEFAULT_DB=${DEFAULT_DB:-${ODOO_VERSION%%.*}_polimexodoo}
+# Auto-detect master password from config file
+_detect_master_pwd() {
+    local conf="${ODOO_CONF_PATH}"
+    if [[ -r "$conf" ]]; then
+        local pwd
+        pwd=$(grep -E '^\s*admin_passwd\s*=' "$conf" 2>/dev/null | sed 's/.*=\s*//' | tr -d '[:space:]')
+        [[ -n "$pwd" ]] && echo "$pwd" && return
+    fi
+    echo "dbadmin"
+}
+MASTER_PWD=${MASTER_PWD:-$(_detect_master_pwd)}
+# Auto-detect default database from config file
+_detect_default_db() {
+    local conf="${ODOO_CONF_PATH}"
+    if [[ -r "$conf" ]]; then
+        local db
+        db=$(grep -E '^\s*db_name\s*=' "$conf" 2>/dev/null | sed 's/.*=\s*//' | tr -d '[:space:]')
+        [[ -n "$db" ]] && echo "$db" && return
+    fi
+    echo "${ODOO_VERSION%%.*}_polimexodoo"
+}
+DEFAULT_DB=${DEFAULT_DB:-$(_detect_default_db)}
 SOURCE_URL=${SOURCE_URL:-http://localhost:${ODOO_HTTP_PORT}}
 DEST_URL=${DEST_URL:-http://localhost:${ODOO_HTTP_PORT}}
 HEALTH_CHECK_TIMEOUT=${HEALTH_CHECK_TIMEOUT:-60}

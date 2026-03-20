@@ -466,6 +466,7 @@ update_custom_module() {
         print_dry_run "git fetch in $repo_path"
         print_dry_run "Stop service $ODOO_SERVICE_NAME"
         print_dry_run "git pull in $repo_path"
+        print_dry_run "Update symlinks from $repo_path"
         print_dry_run "odoo-bin -u $module -d $database"
         print_dry_run "Clear sessions"
         print_dry_run "Start service $ODOO_SERVICE_NAME"
@@ -489,6 +490,18 @@ update_custom_module() {
     # Pull changes
     print_step "Pulling latest changes for $module"
     sudo -u "$ODOO_USER" bash -c "cd '$repo_path' && git pull"
+
+    # Update symlinks for new modules from this repo
+    print_step "Updating symlinks"
+    sudo -u "$ODOO_USER" find "$repo_path" -maxdepth 2 -type f -name "__manifest__.py" -exec dirname {} \; | while read -r mod_dir; do
+        local mod_name
+        mod_name=$(basename "$mod_dir")
+        local symlink="${ODOO_ADDONS_DIR}/${mod_name}"
+        if [[ ! -e "$symlink" ]]; then
+            sudo -u "$ODOO_USER" ln -s "$mod_dir" "$symlink"
+            print_success "New symlink: $mod_name"
+        fi
+    done
 
     # Update module
     print_step "Updating $module in DB $database"

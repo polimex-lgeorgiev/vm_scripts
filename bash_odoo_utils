@@ -480,7 +480,11 @@ sync_repo_symlinks() {
         fi
     done
 
-    [[ "$created" -gt 0 || "$removed" -gt 0 ]] && print_info "Symlinks: $created created, $removed removed"
+    if [[ "$created" -gt 0 || "$removed" -gt 0 ]]; then
+        print_info "Symlinks: $created created, $removed removed"
+    else
+        print_info "Symlinks up to date"
+    fi
 }
 
 ################################################################################

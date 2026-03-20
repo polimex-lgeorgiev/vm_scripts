@@ -433,6 +433,57 @@ odoo_clone_db() {
 }
 
 ################################################################################
+# SYMLINK MANAGEMENT
+################################################################################
+# sync_repo_symlinks REPO_PATH — create missing symlinks, remove dead ones
+sync_repo_symlinks() {
+    local repo_path="$1"
+    local created=0 removed=0
+
+    if [[ ! -d "$repo_path" ]]; then
+        print_warning "Repo path does not exist: $repo_path"
+        return 0
+    fi
+
+    # Create missing symlinks for modules in this repo
+    sudo -u "$ODOO_USER" find "$repo_path" -maxdepth 2 -type f -name "__manifest__.py" -exec dirname {} \; | while read -r mod_dir; do
+        local mod_name
+        mod_name=$(basename "$mod_dir")
+        local symlink="${ODOO_ADDONS_DIR}/${mod_name}"
+        if [[ ! -e "$symlink" ]]; then
+            if [[ "$DRY_RUN" == "true" ]]; then
+                print_dry_run "ln -s $mod_dir $symlink"
+            else
+                sudo -u "$ODOO_USER" ln -s "$mod_dir" "$symlink"
+                print_success "New symlink: $mod_name"
+            fi
+            created=$((created + 1))
+        fi
+    done
+
+    # Remove dead symlinks in addons dir (pointing to this repo)
+    for symlink in "${ODOO_ADDONS_DIR}"/*; do
+        [[ -L "$symlink" ]] || continue
+        local target
+        target=$(readlink -f "$symlink" 2>/dev/null || true)
+        # Only clean symlinks that belong to this repo
+        if [[ "$target" == "${repo_path}"* && ! -e "$symlink" ]]; then
+            local dead_name
+            dead_name=$(basename "$symlink")
+            if [[ "$DRY_RUN" == "true" ]]; then
+                print_dry_run "Remove dead symlink: $dead_name"
+            else
+                sudo -u "$ODOO_USER" rm -f "$symlink"
+                print_warning "Removed dead symlink: $dead_name"
+            fi
+            removed=$((removed + 1))
+        fi
+    done
+
+    [[ "$created" -gt 0 || "$removed" -gt 0 ]] && print_info "Symlinks: $created created, $removed removed"
+}
+
+################################################################################
 # MODULE UPDATE (for update_*_modules.sh thin wrappers)
 ################################################################################
 # update_custom_module -m MODULE -r REPO_PATH [-d DB] [--force]
@@ -464,9 +515,10 @@ update_custom_module() {
     print_step "Checking for updates: $module"
     if [[ "$DRY_RUN" == "true" ]]; then
         print_dry_run "git fetch in $repo_path"
+        print_dry_run "Sync symlinks from $repo_path"
         print_dry_run "Stop service $ODOO_SERVICE_NAME"
         print_dry_run "git pull in $repo_path"
-        print_dry_run "Update symlinks from $repo_path"
+        print_dry_run "Sync symlinks (post-pull)"
         print_dry_run "odoo-bin -u $module -d $database"
         print_dry_run "Clear sessions"
         print_dry_run "Start service $ODOO_SERVICE_NAME"
@@ -477,6 +529,10 @@ update_custom_module() {
     local local_rev remote_rev
     local_rev=$(sudo -u "$ODOO_USER" bash -c "cd '$repo_path' && git rev-parse @")
     remote_rev=$(sudo -u "$ODOO_USER" bash -c "cd '$repo_path' && git rev-parse @{u}")
+
+    # Always sync symlinks (even without git changes)
+    print_step "Syncing symlinks"
+    sync_repo_symlinks "$repo_path"
 
     if [[ "$force" == "false" && "$local_rev" == "$remote_rev" ]]; then
         print_info "No updates for $module. Skipping."
@@ -491,17 +547,9 @@ update_custom_module() {
     print_step "Pulling latest changes for $module"
     sudo -u "$ODOO_USER" bash -c "cd '$repo_path' && git pull"
 
-    # Update symlinks for new modules from this repo
-    print_step "Updating symlinks"
-    sudo -u "$ODOO_USER" find "$repo_path" -maxdepth 2 -type f -name "__manifest__.py" -exec dirname {} \; | while read -r mod_dir; do
-        local mod_name
-        mod_name=$(basename "$mod_dir")
-        local symlink="${ODOO_ADDONS_DIR}/${mod_name}"
-        if [[ ! -e "$symlink" ]]; then
-            sudo -u "$ODOO_USER" ln -s "$mod_dir" "$symlink"
-            print_success "New symlink: $mod_name"
-        fi
-    done
+    # Sync symlinks again after pull (new/removed modules)
+    print_step "Syncing symlinks (post-pull)"
+    sync_repo_symlinks "$repo_path"
 
     # Update module
     print_step "Updating $module in DB $database"

@@ -581,8 +581,12 @@ update_custom_module() {
     fi
     if [[ "$update_exit" -ne 0 || "$update_errors" -gt 0 ]]; then
         print_error "Module update failed! ($update_errors error(s) in log, exit code: $update_exit)"
-        print_info "Review the log above. Starting Odoo service anyway..."
-        sudo systemctl start "$ODOO_SERVICE_NAME"
+        if confirm_action "Start Odoo service despite errors?"; then
+            sudo systemctl start "$ODOO_SERVICE_NAME"
+            check_odoo_running || true
+        else
+            print_warning "Odoo service left stopped. Fix errors and start manually."
+        fi
         return 1
     fi
 
@@ -593,15 +597,16 @@ update_custom_module() {
     sudo -u "$ODOO_USER" bash -c "rm -f ${ODOO_SESSIONS_PATH}/*.sess"
 
     # Start service
-    print_step "Starting Odoo service"
-    sudo systemctl start "$ODOO_SERVICE_NAME"
-
-    # Health check
-    check_odoo_running || print_warning "Odoo may not have started correctly"
+    if confirm_action "Start Odoo service?"; then
+        print_step "Starting Odoo service"
+        sudo systemctl start "$ODOO_SERVICE_NAME"
+        check_odoo_running || print_warning "Odoo may not have started correctly"
+    else
+        print_info "Odoo service left stopped."
+    fi
 
     local elapsed=$(( SECONDS - start_time ))
     print_success "Module $module updated in $(format_duration $elapsed)"
-    print_info "Use odoo_logs to monitor the service"
 }
 
 ################################################################################

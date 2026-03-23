@@ -1097,7 +1097,7 @@ odoo_load_translations() {
     fi
 
     print_step "Loading translations: $lang into $database"
-    run_odoo "$ODOO_BIN_PATH -c $ODOO_CONF_PATH -d '$database' --load-language='$lang' --stop-after-init"
+    run_odoo "$ODOO_BIN_PATH -c $ODOO_CONF_PATH -d '$database' --load-language='$lang' --no-http --stop-after-init"
     local elapsed=$(( SECONDS - start_time ))
     print_success "Translations loaded in $(format_duration $elapsed)"
 }

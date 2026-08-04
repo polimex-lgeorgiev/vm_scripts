@@ -603,7 +603,12 @@ update_custom_module() {
         return 0
     fi
 
-    sudo -u "$ODOO_USER" bash -c "cd '$repo_path' && git fetch"
+    # Explicit check: errexit is suspended when this function is called in a
+    # ||/&& context, so a failed fetch must not fall through to "No updates"
+    if ! sudo -u "$ODOO_USER" bash -c "cd '$repo_path' && git fetch"; then
+        print_error "git fetch failed for $module — check network access / repository key"
+        return 1
+    fi
     local local_rev remote_rev
     local_rev=$(sudo -u "$ODOO_USER" bash -c "cd '$repo_path' && git rev-parse @")
     remote_rev=$(sudo -u "$ODOO_USER" bash -c "cd '$repo_path' && git rev-parse @{u}")

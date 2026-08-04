@@ -65,6 +65,12 @@ for pair in "${POLIMEX_REPOS[@]}"; do
         # Fresh clone: force so an already-installed module gets its -u run
         update_custom_module -m "$module" -r "$repo_path" --force "$@" || rc=1
     else
+        # Converge the remote to the canonical URL (heals drift on client installs)
+        current_url=$(sudo -u "$ODOO_USER" git -C "$repo_path" remote get-url origin 2>/dev/null || echo "")
+        if [[ "$current_url" != "$git_url" && "$DRY_RUN" != "true" ]]; then
+            print_warning "Remote of $repo_dir is '$current_url' — resetting to $git_url"
+            sudo -u "$ODOO_USER" git -C "$repo_path" remote set-url origin "$git_url"
+        fi
         update_custom_module -m "$module" -r "$repo_path" "$@" || rc=1
     fi
 done

@@ -451,10 +451,12 @@ sync_repo_symlinks() {
         mod_name=$(basename "$mod_dir")
         local symlink="${ODOO_ADDONS_DIR}/${mod_name}"
         if [[ ! -e "$symlink" ]]; then
+            local rel_target
+            rel_target=$(realpath --relative-to="$ODOO_ADDONS_DIR" "$mod_dir")
             if [[ "$DRY_RUN" == "true" ]]; then
-                print_dry_run "ln -s $mod_dir $symlink"
+                print_dry_run "ln -s $rel_target $symlink"
             else
-                sudo -u "$ODOO_USER" ln -s "$mod_dir" "$symlink"
+                sudo -u "$ODOO_USER" ln -s "$rel_target" "$symlink"
                 print_success "New symlink: $mod_name"
             fi
             created=$((created + 1))
@@ -485,6 +487,78 @@ sync_repo_symlinks() {
     else
         print_info "Symlinks up to date"
     fi
+}
+
+################################################################################
+# SHARED GITHUB DEPLOY KEY (read-only) for private Polimex repos
+# Older installs cannot register their own deploy key (GitHub allows a key on
+# exactly one repo), so they reuse the shared read-only key shipped in
+# vm_scripts/keys/. ensure_odoo_ssh_key installs/refreshes it for ODOO_USER.
+################################################################################
+VM_SCRIPTS_KEYS_DIR="${VM_SCRIPTS_KEYS_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/keys}"
+SHARED_DEPLOY_KEY="${SHARED_DEPLOY_KEY:-${VM_SCRIPTS_KEYS_DIR}/polimex_ws_deploy}"
+
+ensure_odoo_ssh_key() {
+    local odoo_home ssh_dir key
+    if [[ "$DRY_RUN" == "true" ]]; then
+        print_dry_run "Install/refresh shared deploy key for $ODOO_USER + github.com known_hosts"
+        return 0
+    fi
+    odoo_home=$(getent passwd "$ODOO_USER" | cut -d: -f6 || true)
+    if [[ -z "$odoo_home" ]]; then
+        print_error "Cannot determine home directory for $ODOO_USER"
+        return 1
+    fi
+    ssh_dir="${odoo_home}/.ssh"
+    key="${ssh_dir}/id_ed25519"
+    if [[ ! -f "$SHARED_DEPLOY_KEY" ]]; then
+        print_error "Bundled deploy key missing: $SHARED_DEPLOY_KEY (git pull vm_scripts?)"
+        return 1
+    fi
+
+    sudo -u "$ODOO_USER" mkdir -p "$ssh_dir"
+    sudo chmod 700 "$ssh_dir"
+
+    # Install when missing; replace when it differs from the bundled key
+    # (bundled key is canonical — this doubles as the rotation mechanism)
+    if ! sudo -u "$ODOO_USER" test -f "${key}.pub" || \
+       ! sudo diff -q "${key}.pub" "${SHARED_DEPLOY_KEY}.pub" &>/dev/null; then
+        if sudo -u "$ODOO_USER" test -f "$key"; then
+            print_warning "SSH key of $ODOO_USER differs from bundled deploy key — replacing"
+        fi
+        sudo install -o "$ODOO_USER" -g "$ODOO_USER" -m 600 "$SHARED_DEPLOY_KEY" "$key"
+        sudo install -o "$ODOO_USER" -g "$ODOO_USER" -m 644 "${SHARED_DEPLOY_KEY}.pub" "${key}.pub"
+        print_success "Shared deploy key installed for $ODOO_USER"
+    fi
+
+    # github.com host key (avoid interactive prompt on first clone/fetch)
+    if ! sudo -u "$ODOO_USER" ssh-keygen -F github.com -f "${ssh_dir}/known_hosts" &>/dev/null; then
+        sudo -u "$ODOO_USER" bash -c \
+            "ssh-keyscan -t ed25519 github.com >> '${ssh_dir}/known_hosts' 2>/dev/null && chmod 600 '${ssh_dir}/known_hosts'"
+        print_info "Added github.com to known_hosts of $ODOO_USER"
+    fi
+}
+
+################################################################################
+# clone_custom_repo REPO_PATH GIT_URL [BRANCH]
+# Clones a missing custom-addons repo as ODOO_USER. git@ URLs use the shared
+# deploy key (ensure_odoo_ssh_key). BRANCH defaults to ODOO_VERSION.
+################################################################################
+clone_custom_repo() {
+    local repo_path="$1" git_url="$2" branch="${3:-$ODOO_VERSION}"
+    if [[ "$DRY_RUN" == "true" ]]; then
+        print_dry_run "git clone -b $branch $git_url $repo_path (as $ODOO_USER)"
+        return 0
+    fi
+    if [[ "$git_url" == git@* || "$git_url" == ssh://* ]]; then
+        ensure_odoo_ssh_key || return 1
+    fi
+    print_step "Cloning $(basename "$repo_path") from $git_url (branch $branch)"
+    if ! sudo -u "$ODOO_USER" git clone -b "$branch" "$git_url" "$repo_path"; then
+        print_error "Clone failed: $git_url"
+        return 1
+    fi
+    print_success "Cloned $(basename "$repo_path")"
 }
 
 ################################################################################
@@ -543,13 +617,27 @@ update_custom_module() {
         return 0
     fi
 
+    # Module not installed in this DB → code-only update: pull + symlinks,
+    # no service stop and no -u (upgrading an uninstalled module is a full
+    # registry reload for nothing).
+    local installed
+    installed=$(sudo -u "$ODOO_USER" psql -d "$database" -tAc \
+        "SELECT 1 FROM ir_module_module WHERE name = '$module' AND state IN ('installed', 'to upgrade', 'to install')" 2>/dev/null || true)
+    if [[ "$installed" != "1" ]]; then
+        print_warning "Module $module is not installed in $database — updating code only (no -u, no restart)"
+        sudo -u "$ODOO_USER" bash -c "cd '$repo_path' && git pull --ff-only"
+        sync_repo_symlinks "$repo_path"
+        print_success "Repo $(basename "$repo_path") updated; module $module awaits installation"
+        return 0
+    fi
+
     # Stop service
     print_step "Stopping Odoo service"
     sudo systemctl stop "$ODOO_SERVICE_NAME"
 
-    # Pull changes
+    # Pull changes (--ff-only: local drift must fail loudly, not silently merge)
     print_step "Pulling latest changes for $module"
-    sudo -u "$ODOO_USER" bash -c "cd '$repo_path' && git pull"
+    sudo -u "$ODOO_USER" bash -c "cd '$repo_path' && git pull --ff-only"
 
     # Sync symlinks again after pull (new/removed modules)
     print_step "Syncing symlinks (post-pull)"

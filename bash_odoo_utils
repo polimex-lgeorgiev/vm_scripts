@@ -667,14 +667,27 @@ update_custom_module() {
     if [[ "$new_lines" -gt 0 ]]; then
         update_errors=$(tail -n "$new_lines" "$ODOO_LOG_PATH" | grep -c ' ERROR ' || true)
     fi
-    if [[ "$update_exit" -ne 0 || "$update_errors" -gt 0 ]]; then
-        print_error "Module update failed! ($update_errors error(s) in log, exit code: $update_exit)"
-        if confirm_action "Start Odoo service despite errors?"; then
-            sudo systemctl start "$ODOO_SERVICE_NAME"
-            check_odoo_running || true
-        else
-            print_warning "Odoo service left stopped. Fix errors and start manually."
-        fi
+    # Fully unattended error handling — the client must never be left with a
+    # stopped server or an open question:
+    #  - odoo-bin failed (exit != 0): DB upgrade aborted -> roll the CODE back
+    #    to the previous revision and start on the known-good version
+    #  - odoo-bin succeeded but ERROR lines in log: DB is upgraded -> keep the
+    #    new code (rolling back now would mismatch the schema), start and warn
+    if [[ "$update_exit" -ne 0 ]]; then
+        print_error "Module update failed! (exit code: $update_exit, $update_errors error(s) in log)"
+        print_warning "Rolling back $module code to the previous version"
+        sudo -u "$ODOO_USER" bash -c "cd '$repo_path' && git reset --hard '$local_rev'"
+        sync_repo_symlinks "$repo_path"
+        sudo systemctl start "$ODOO_SERVICE_NAME"
+        check_odoo_running || true
+        print_warning "System restored to the previous version and started — contact Polimex support"
+        return 1
+    fi
+    if [[ "$update_errors" -gt 0 ]]; then
+        print_error "Update finished with $update_errors error line(s) in the log"
+        sudo systemctl start "$ODOO_SERVICE_NAME"
+        check_odoo_running || true
+        print_warning "System started on the new version — review the log above / contact Polimex support"
         return 1
     fi
 
@@ -684,14 +697,10 @@ update_custom_module() {
     print_info "Clearing sessions"
     sudo -u "$ODOO_USER" bash -c "rm -f ${ODOO_SESSIONS_PATH}/*.sess"
 
-    # Start service
-    if confirm_action "Start Odoo service?"; then
-        print_step "Starting Odoo service"
-        sudo systemctl start "$ODOO_SERVICE_NAME"
-        check_odoo_running || print_warning "Odoo may not have started correctly"
-    else
-        print_info "Odoo service left stopped."
-    fi
+    # Start service (unattended — no prompts, the update must be transparent)
+    print_step "Starting Odoo service"
+    sudo systemctl start "$ODOO_SERVICE_NAME"
+    check_odoo_running || print_warning "Odoo may not have started correctly"
 
     local elapsed=$(( SECONDS - start_time ))
     print_success "Module $module updated in $(format_duration $elapsed)"

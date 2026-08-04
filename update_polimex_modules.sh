@@ -22,7 +22,7 @@ POLIMEX_REPOS=(
 )
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-    echo "Usage: $0 [--dry-run] [--verbose] [--yes] [-d DATABASE] [-m MODULE] [--force]"
+    echo "Usage: $0 [--dry-run] [--verbose] [-d DATABASE] [-m MODULE] [--force]"
     echo "Updates all tracked Polimex repos (cloning missing ones):"
     for pair in "${POLIMEX_REPOS[@]}"; do
         rest="${pair#*:}"
